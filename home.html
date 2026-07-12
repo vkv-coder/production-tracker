@@ -129,14 +129,15 @@ async function loadToday() {
     const { data: fabRows } = await supabaseClient
         .from('pr_fab_tracking')
         .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, job_id, pr_jobs(job_no, company_id, pr_units(unit_name)), pr_fab_steps_master(step_name)')
-        .is('actual_end', null);
+        .or('inspection_status.neq.Accept,actual_end.is.null');
 
     const relevant = (fabRows || []).filter(r => {
         if (!r.pr_jobs || r.pr_jobs.company_id !== session.companyId) return false;
         const dueToday = r.planned_start === today || r.planned_end === today;
         const overdue = (r.planned_start && r.planned_start < today && !r.actual_start) || (r.planned_end && r.planned_end < today);
         const ongoing = r.actual_start && !r.actual_end;
-        return dueToday || overdue || ongoing;
+        const needsInspection = r.actual_end && r.inspection_status !== 'Accept';
+        return dueToday || overdue || ongoing || needsInspection;
     });
 
     if (relevant.length === 0) {
@@ -158,7 +159,7 @@ async function loadToday() {
         html += '<div class="pr-card-title">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + (r.pr_jobs && r.pr_jobs.pr_units ? ' [' + r.pr_jobs.pr_units.unit_name + ']' : '') + '</div>';
         html += '<div class="pr-card-sub">' + (r.pr_fab_steps_master ? r.pr_fab_steps_master.step_name : '') + '</div>';
         html += '<div style="font-size:12px; color:' + (isOverdue ? '#a00' : '#666') + ';">Planned: ' + (r.planned_start || '-') + ' to ' + (r.planned_end || '-') + (isOverdue ? ' &mdash; OVERDUE' : '') + '</div>';
-        html += '<div style="margin-top:8px; display:flex; gap:8px;">';
+        html += '<div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">';
         if (!r.actual_start) {
             html += '<button class="pr-btn pr-btn-success" onclick="markActual(\'' + r.id + '\',\'start\')">Start</button>';
         }
@@ -171,10 +172,19 @@ async function loadToday() {
             html += '<span class="pr-btn pr-btn-danger" style="cursor:default;">JOB</span>';
         }
         html += '<span class="pr-btn ' + (r.inspection_status === 'Accept' ? 'pr-btn-success' : 'pr-btn-danger') + '" style="cursor:default;">INSPECTION</span>';
+        if (r.actual_end && r.inspection_status !== 'Accept') {
+            html += '<button class="pr-btn pr-btn-primary" onclick="endInspection(\'' + r.id + '\')">End Inspection</button>';
+        }
         html += '</div></div>';
     });
     container.innerHTML = html;
     loadTodayPainting();
+}
+
+async function endInspection(trackingId) {
+    const { error } = await supabaseClient.from('pr_fab_tracking').update({ inspection_status: 'Accept' }).eq('id', trackingId);
+    if (error) { alert('Error updating: ' + error.message); return; }
+    loadToday();
 }
 
 async function loadTodayPainting() {
@@ -237,7 +247,8 @@ async function loadTomorrow() {
     const { data: fabRows } = await supabaseClient
         .from('pr_fab_tracking')
         .select('id, planned_start, planned_end, job_id, pr_jobs(job_no, company_id, pr_units(unit_name)), pr_fab_steps_master(step_name)')
-        .or('planned_start.eq.' + tomorrow + ',planned_end.eq.' + tomorrow);
+        .or('planned_start.eq.' + tomorrow + ',planned_end.eq.' + tomorrow)
+        .is('actual_end', null);
 
     const relevant = (fabRows || []).filter(r => r.pr_jobs && r.pr_jobs.company_id === session.companyId);
 
