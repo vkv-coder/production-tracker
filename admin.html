@@ -21,7 +21,6 @@
     <div class="pr-tab" data-tab="units" onclick="switchTab('units')">Units</div>
     <div class="pr-tab" data-tab="inspectors" onclick="switchTab('inspectors')">Inspectors</div>
     <div class="pr-tab" data-tab="workers" onclick="switchTab('workers')">Workers</div>
-    <div class="pr-tab" data-tab="users" onclick="switchTab('users')">Users</div>
     <div class="pr-tab" data-tab="jobs" onclick="switchTab('jobs')">Jobs</div>
 </div>
 
@@ -87,30 +86,6 @@
         <div id="workersMasterList"><p class="pr-empty">Loading...</p></div>
     </div>
 
-    <!-- USERS -->
-    <div id="tab-users" class="tab-content" style="display:none;">
-        <div class="pr-card">
-            <p style="font-size:12px; color:#666; margin-bottom:8px;">
-                First create their login in Supabase &rarr; Authentication &rarr; Users &rarr; Add user (email + password, tick Auto Confirm). Then paste their User UID below.
-            </p>
-            <label class="pr-label">Name</label>
-            <input type="text" id="newUserName" class="pr-input" placeholder="Full name">
-            <label class="pr-label">Mobile</label>
-            <input type="text" id="newUserMobile" class="pr-input" placeholder="Mobile number">
-            <label class="pr-label">Email</label>
-            <input type="email" id="newUserEmail" class="pr-input" placeholder="Email used in Supabase Auth">
-            <label class="pr-label">Role</label>
-            <select id="newUserRole" class="pr-select">
-                <option value="Admin">Admin</option>
-                <option value="Supervisor">Supervisor</option>
-            </select>
-            <label class="pr-label">Auth User UID</label>
-            <input type="text" id="newUserAuthId" class="pr-input" placeholder="Paste UID from Supabase Auth">
-            <button class="pr-btn pr-btn-primary" onclick="addUser()">Add User</button>
-        </div>
-        <div id="usersList"><p class="pr-empty">Loading...</p></div>
-    </div>
-
     <!-- JOBS -->
     <div id="tab-jobs" class="tab-content" style="display:none;">
         <div id="jobsList"><p class="pr-empty">Loading...</p></div>
@@ -134,7 +109,6 @@ function switchTab(tab) {
     if (tab === 'units') loadUnits();
     if (tab === 'inspectors') loadInspectors();
     if (tab === 'workers') loadWorkersMaster();
-    if (tab === 'users') loadUsers();
     if (tab === 'jobs') loadJobsAdmin();
 }
 
@@ -305,44 +279,6 @@ async function addWorker() {
     if (error) { alert('Error: ' + error.message); return; }
     document.getElementById('newWorkerName').value = '';
     loadWorkersMaster();
-}
-
-// ============ USERS ============
-async function loadUsers() {
-    const container = document.getElementById('usersList');
-    container.innerHTML = '<p class="pr-empty">Loading...</p>';
-    const { data } = await supabaseClient.from('pr_users').select('*').eq('company_id', session.companyId).order('name');
-
-    let html = '<table class="pr-table"><tr><th>Name</th><th>Mobile</th><th>Role</th><th>Status</th><th></th></tr>';
-    (data || []).forEach(u => {
-        html += '<tr><td>' + u.name + '</td><td>' + (u.mobile || '-') + '</td><td>' + u.role + '</td>';
-        html += '<td><span class="pr-badge pr-badge-' + (u.is_active ? 'accept' : 'reject') + '">' + (u.is_active ? 'Active' : 'Inactive') + '</span></td>';
-        html += '<td><button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_users\',\'' + u.id + '\',' + u.is_active + ',loadUsers)">' + (u.is_active ? 'Deactivate' : 'Activate') + '</button></td></tr>';
-    });
-    html += '</table>';
-    container.innerHTML = html;
-}
-
-async function addUser() {
-    const name = document.getElementById('newUserName').value.trim();
-    const mobile = document.getElementById('newUserMobile').value.trim();
-    const email = document.getElementById('newUserEmail').value.trim();
-    const role = document.getElementById('newUserRole').value;
-    const authId = document.getElementById('newUserAuthId').value.trim();
-
-    if (!name || !authId) { alert('Name and Auth User UID are required'); return; }
-
-    const { error } = await supabaseClient.from('pr_users').insert({
-        company_id: session.companyId, name: name, mobile: mobile || null, email: email || null,
-        role: role, auth_user_id: authId, password_hash: 'not_used'
-    });
-    if (error) { alert('Error: ' + error.message); return; }
-
-    document.getElementById('newUserName').value = '';
-    document.getElementById('newUserMobile').value = '';
-    document.getElementById('newUserEmail').value = '';
-    document.getElementById('newUserAuthId').value = '';
-    loadUsers();
 }
 
 // ============ JOBS (Edit / Delete) ============
