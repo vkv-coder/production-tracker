@@ -1,0 +1,208 @@
+/* ============================================================
+   PRODUCTION TRACKER - Shared Styles
+   ============================================================ */
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    font-family: 'Segoe UI', Arial, sans-serif;
+}
+
+body {
+    background: #f2f4f7;
+    color: #1a1a1a;
+    padding-bottom: 60px;
+}
+
+/* Header */
+.pr-header {
+    background: #1e3a5f;
+    color: #fff;
+    padding: 14px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+}
+
+.pr-header h1 {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.pr-header .logout-btn {
+    background: #d9534f;
+    color: #fff;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+}
+
+/* Tabs */
+.pr-tabs {
+    display: flex;
+    overflow-x: auto;
+    background: #fff;
+    border-bottom: 1px solid #ddd;
+    position: sticky;
+    top: 52px;
+    z-index: 99;
+}
+
+.pr-tab {
+    flex: 1;
+    text-align: center;
+    padding: 12px 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #666;
+    border-bottom: 3px solid transparent;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.pr-tab.active {
+    color: #1e3a5f;
+    border-bottom: 3px solid #1e3a5f;
+}
+
+/* Container */
+.pr-container {
+    padding: 16px;
+}
+
+/* Cards */
+.pr-card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+.pr-card-title {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+.pr-card-sub {
+    font-size: 12px;
+    color: #666;
+    margin-bottom: 8px;
+}
+
+/* Progress bar */
+.pr-progress-bg {
+    background: #e6e6e6;
+    border-radius: 20px;
+    height: 10px;
+    overflow: hidden;
+    margin: 6px 0;
+}
+
+.pr-progress-fill {
+    height: 100%;
+    background: #2e7d32;
+    border-radius: 20px;
+}
+
+/* Buttons */
+.pr-btn {
+    display: inline-block;
+    padding: 8px 14px;
+    border-radius: 6px;
+    border: none;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    text-align: center;
+}
+
+.pr-btn-primary { background: #1e3a5f; color: #fff; }
+.pr-btn-success { background: #2e7d32; color: #fff; }
+.pr-btn-danger  { background: #d9534f; color: #fff; }
+.pr-btn-outline { background: #fff; color: #1e3a5f; border: 1px solid #1e3a5f; }
+
+/* Forms */
+.pr-input, .pr-select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 14px;
+    margin-bottom: 10px;
+}
+
+.pr-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #444;
+    margin-bottom: 4px;
+    display: block;
+}
+
+/* Table */
+.pr-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.pr-table th, .pr-table td {
+    border: 1px solid #e0e0e0;
+    padding: 8px;
+    text-align: left;
+}
+
+.pr-table th {
+    background: #f0f2f5;
+    font-weight: 700;
+}
+
+/* Status badges */
+.pr-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.pr-badge-pending { background: #fff3cd; color: #856404; }
+.pr-badge-accept  { background: #d4edda; color: #155724; }
+.pr-badge-reject  { background: #f8d7da; color: #721c24; }
+.pr-badge-redo    { background: #ffe5b4; color: #a05a00; }
+.pr-badge-running { background: #d1ecf1; color: #0c5460; }
+.pr-badge-completed { background: #d4edda; color: #155724; }
+
+/* Floating Action Button */
+.pr-fab {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background: #1e3a5f;
+    color: #fff;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    box-shadow: 0 3px 8px rgba(0,0,0,0.3);
+    text-decoration: none;
+}
+
+/* Empty state */
+.pr-empty {
+    text-align: center;
+    color: #999;
+    padding: 30px 10px;
+    font-size: 13px;
+}
