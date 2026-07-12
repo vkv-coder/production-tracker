@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Production Tracker - Login</title>
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body style="display:flex; align-items:center; justify-content:center; min-height:100vh; background:#1e3a5f;">
+
+<div style="background:#fff; border-radius:14px; padding:30px 24px; width:100%; max-width:360px; box-shadow:0 8px 24px rgba(0,0,0,0.25);">
+
+    <h1 style="text-align:center; font-size:22px; color:#1e3a5f; margin-bottom:4px;">Production Tracker</h1>
+    <p style="text-align:center; font-size:13px; color:#777; margin-bottom:22px;">Fabrication & Painting Tracking</p>
+
+    <label class="pr-label">Company</label>
+    <select id="companySelect" class="pr-select">
+        <option value="">Loading companies...</option>
+    </select>
+
+    <label class="pr-label">Mobile Number</label>
+    <input type="text" id="mobileInput" class="pr-input" placeholder="Enter mobile number">
+
+    <label class="pr-label">Password</label>
+    <input type="password" id="passwordInput" class="pr-input" placeholder="Enter password">
+
+    <button onclick="doLogin()" class="pr-btn pr-btn-primary" style="width:100%; padding:12px; font-size:15px; margin-top:6px;">Login</button>
+
+    <p id="errorMsg" style="color:#d9534f; font-size:13px; text-align:center; margin-top:12px; display:none;"></p>
+
+</div>
+
+<script src="config.js"></script>
+<script>
+
+async function loadCompanies() {
+    const { data, error } = await supabaseClient
+        .from('pr_companies')
+        .select('id, company_name, subdomain_slug')
+        .eq('is_active', true)
+        .order('company_name');
+
+    const sel = document.getElementById('companySelect');
+    sel.innerHTML = '';
+
+    if (error || !data || data.length === 0) {
+        sel.innerHTML = '<option value="">No companies found</option>';
+        return;
+    }
+
+    data.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        opt.textContent = c.company_name;
+        sel.appendChild(opt);
+    });
+}
+
+async function doLogin() {
+    const errorMsg = document.getElementById('errorMsg');
+    errorMsg.style.display = 'none';
+
+    const companyId = document.getElementById('companySelect').value;
+    const mobile = document.getElementById('mobileInput').value.trim();
+    const password = document.getElementById('passwordInput').value;
+
+    if (!companyId || !mobile || !password) {
+        errorMsg.textContent = 'Please fill all fields';
+        errorMsg.style.display = 'block';
+        return;
+    }
+
+    const { data, error } = await supabaseClient
+        .from('pr_users')
+        .select('id, name, role, company_id, password_hash')
+        .eq('company_id', companyId)
+        .eq('mobile', mobile)
+        .eq('is_active', true)
+        .maybeSingle();
+
+    if (error || !data) {
+        errorMsg.textContent = 'User not found';
+        errorMsg.style.display = 'block';
+        return;
+    }
+
+    // NOTE: simple plaintext check for now (password_hash stores plain password).
+    // Can be upgraded to real hashing later if needed.
+    if (data.password_hash !== password) {
+        errorMsg.textContent = 'Incorrect password';
+        errorMsg.style.display = 'block';
+        return;
+    }
+
+    setSession({
+        userId: data.id,
+        name: data.name,
+        role: data.role,
+        companyId: data.company_id
+    });
+
+    window.location.href = 'home.html';
+}
+
+loadCompanies();
+</script>
+
+</body>
+</html>
