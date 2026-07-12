@@ -67,6 +67,7 @@ body {
 
 .pr-tab.active {
     color: #1e3a5f;
+    background: #e6edf5;
     border-bottom: 3px solid #1e3a5f;
 }
 
