@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Production Tracker - Job Detail</title>
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div class="pr-header">
+    <h1 id="jobNoHeader">Job Detail</h1>
+    <div style="display:flex; align-items:center; gap:10px;">
+        <button class="logout-btn" style="background:#555;" onclick="window.location.href='home.html'">Back</button>
+    </div>
+</div>
+
+<div class="pr-tabs">
+    <div class="pr-tab active" data-tab="fab" onclick="switchTab('fab')">Fabrication</div>
+    <div class="pr-tab" data-tab="paint" onclick="switchTab('paint')">Painting</div>
+</div>
+
+<div class="pr-container">
+
+    <div id="tab-fab" class="tab-content">
+        <div id="fabTable"><p class="pr-empty">Loading...</p></div>
+    </div>
+
+    <div id="tab-paint" class="tab-content" style="display:none;">
+        <div id="paintItemTabs" style="display:flex; gap:8px; margin-bottom:12px;"></div>
+        <div id="paintTable"><p class="pr-empty">Loading...</p></div>
+    </div>
+
+</div>
+
+<script src="config.js"></script>
+<script>
+
+const session = requireLogin();
+const urlParams = new URLSearchParams(window.location.search);
+const jobId = urlParams.get('job');
+
+let inspectorsList = [];
+let paintItems = [];
+let currentPaintItemId = null;
+
+if (!jobId) {
+    document.body.innerHTML = '<p class="pr-empty">No job specified.</p>';
+}
+
+async function init() {
+    const { data: job } = await supabaseClient.from('pr_jobs').select('job_no, customer_name').eq('id', jobId).maybeSingle();
+    if (job) document.getElementById('jobNoHeader').textContent = job.job_no + (job.customer_name ? ' - ' + job.customer_name : '');
+
+    const { data: insp } = await supabaseClient.from('pr_inspectors').select('id, inspector_name').eq('company_id', session.companyId).eq('is_active', true);
+    inspectorsList = insp || [];
+
+    const { data: items } = await supabaseClient.from('pr_paint_items_master').select('id, item_name').eq('company_id', session.companyId).eq('is_active', true);
+    paintItems = items || [];
+
+    loadFabTable();
+}
+
+function switchTab(tab) {
+    document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.pr-tab').forEach(el => el.classList.remove('active'));
+    document.getElementById('tab-' + tab).style.display = 'block';
+    document.querySelector('.pr-tab[data-tab="' + tab + '"]').classList.add('active');
+    if (tab === 'paint') loadPaintTabs();
+}
+
+// ============ FABRICATION ============
+async function loadFabTable() {
+    const container = document.getElementById('fabTable');
+    container.innerHTML = '<p class="pr-empty">Loading...</p>';
+
+    const { data } = await supabaseClient
+        .from('pr_fab_tracking')
+        .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, inspector_id, remarks, pr_fab_steps_master(step_name, step_order)')
+        .eq('job_id', jobId);
+
+    if (!data || data.length === 0) {
+        container.innerHTML = '<p class="pr-empty">No fabrication steps found for this job.</p>';
+        return;
+    }
+
+    data.sort((a, b) => (a.pr_fab_steps_master?.step_order || 0) - (b.pr_fab_steps_master?.step_order || 0));
+
+    let html = '';
+    data.forEach(r => {
+        const inspOptions = inspectorsList.map(i =>
+            '<option value="' + i.id + '"' + (r.inspector_id === i.id ? ' selected' : '') + '>' + i.inspector_name + '</option>'
+        ).join('');
+
+        html += '<div class="pr-card">';
+        html += '<div class="pr-card-title">' + (r.pr_fab_steps_master?.step_order || '') + '. ' + (r.pr_fab_steps_master?.step_name || '') + '</div>';
+
+        html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">';
+        html += '<div><label class="pr-label">Planned Start</label><input type="date" class="pr-input" value="' + (r.planned_start || '') + '" onchange="updateFabField(\'' + r.id + '\',\'planned_start\',this.value)"></div>';
+        html += '<div><label class="pr-label">Planned End</label><input type="date" class="pr-input" value="' + (r.planned_end || '') + '" onchange="updateFabField(\'' + r.id + '\',\'planned_end\',this.value)"></div>';
+        html += '<div><label class="pr-label">Actual Start</label><input type="date" class="pr-input" value="' + (r.actual_start || '') + '" onchange="updateFabField(\'' + r.id + '\',\'actual_start\',this.value)"></div>';
+        html += '<div><label class="pr-label">Actual End</label><input type="date" class="pr-input" value="' + (r.actual_end || '') + '" onchange="updateFabField(\'' + r.id + '\',\'actual_end\',this.value)"></div>';
+        html += '</div>';
+
+        html += '<label class="pr-label" style="margin-top:6px;">Inspection</label>';
+        html += '<select class="pr-select" onchange="updateFabField(\'' + r.id + '\',\'inspection_status\',this.value)">';
+        ['Pending', 'Accept', 'Reject', 'Redo'].forEach(s => {
+            html += '<option value="' + s + '"' + (r.inspection_status === s ? ' selected' : '') + '>' + s + '</option>';
+        });
+        html += '</select>';
+
+        html += '<label class="pr-label">Inspector</label>';
+        html += '<select class="pr-select" onchange="updateFabField(\'' + r.id + '\',\'inspector_id\',this.value)"><option value="">-- Select --</option>' + inspOptions + '</select>';
+
+        html += '<label class="pr-label">Remarks</label>';
+        html += '<input type="text" class="pr-input" value="' + (r.remarks || '').replace(/"/g, '&quot;') + '" onchange="updateFabField(\'' + r.id + '\',\'remarks\',this.value)">';
+
+        html += '</div>';
+    });
+    container.innerHTML = html;
+}
+
+async function updateFabField(trackingId, field, value) {
+    const updateObj = {};
+    updateObj[field] = value === '' ? null : value;
+    const { error } = await supabaseClient.from('pr_fab_tracking').update(updateObj).eq('id', trackingId);
+    if (error) alert('Error saving: ' + error.message);
+}
+
+// ============ PAINTING ============
+function loadPaintTabs() {
+    const tabsDiv = document.getElementById('paintItemTabs');
+    tabsDiv.innerHTML = '';
+    paintItems.forEach((item, idx) => {
+        const btn = document.createElement('button');
+        btn.className = 'pr-btn ' + (idx === 0 ? 'pr-btn-primary' : 'pr-btn-outline');
+        btn.textContent = item.item_name;
+        btn.onclick = () => selectPaintItem(item.id, btn);
+        tabsDiv.appendChild(btn);
+    });
+    if (paintItems.length > 0) {
+        currentPaintItemId = paintItems[0].id;
+        loadPaintTable();
+    }
+}
+
+function selectPaintItem(itemId, btnEl) {
+    currentPaintItemId = itemId;
+    document.querySelectorAll('#paintItemTabs button').forEach(b => b.className = 'pr-btn pr-btn-outline');
+    btnEl.className = 'pr-btn pr-btn-primary';
+    loadPaintTable();
+}
+
+async function loadPaintTable() {
+    const container = document.getElementById('paintTable');
+    container.innerHTML = '<p class="pr-empty">Loading...</p>';
+
+    const { data } = await supabaseClient
+        .from('pr_paint_tracking')
+        .select('id, start_date, start_time, stop_date, stop_time, process_id, pr_paint_process_master(process_name, process_order)')
+        .eq('job_id', jobId)
+        .eq('paint_item_id', currentPaintItemId);
+
+    if (!data || data.length === 0) {
+        container.innerHTML = '<p class="pr-empty">No painting processes found for this item.</p>';
+        return;
+    }
+
+    data.sort((a, b) => (a.pr_paint_process_master?.process_order || 0) - (b.pr_paint_process_master?.process_order || 0));
+
+    let html = '';
+    data.forEach(r => {
+        html += '<div class="pr-card">';
+        html += '<div class="pr-card-title">' + (r.pr_paint_process_master?.process_order || '') + '. ' + (r.pr_paint_process_master?.process_name || '') + '</div>';
+        html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">';
+        html += '<div><label class="pr-label">Start Date</label><input type="date" class="pr-input" value="' + (r.start_date || '') + '" onchange="updatePaintField(\'' + r.id + '\',\'start_date\',this.value)"></div>';
+        html += '<div><label class="pr-label">Start Time</label><input type="time" class="pr-input" value="' + (r.start_time || '') + '" onchange="updatePaintField(\'' + r.id + '\',\'start_time\',this.value)"></div>';
+        html += '<div><label class="pr-label">Stop Date</label><input type="date" class="pr-input" value="' + (r.stop_date || '') + '" onchange="updatePaintField(\'' + r.id + '\',\'stop_date\',this.value)"></div>';
+        html += '<div><label class="pr-label">Stop Time</label><input type="time" class="pr-input" value="' + (r.stop_time || '') + '" onchange="updatePaintField(\'' + r.id + '\',\'stop_time\',this.value)"></div>';
+        html += '</div></div>';
+    });
+    container.innerHTML = html;
+}
+
+async function updatePaintField(trackingId, field, value) {
+    const updateObj = {};
+    updateObj[field] = value === '' ? null : value;
+    const { error } = await supabaseClient.from('pr_paint_tracking').update(updateObj).eq('id', trackingId);
+    if (error) alert('Error saving: ' + error.message);
+}
+
+if (session && jobId) init();
+
+</script>
+
+</body>
+</html>
