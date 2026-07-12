@@ -14,6 +14,7 @@
     <h1 id="companyNameHeader">Production Tracker</h1>
     <div style="display:flex; align-items:center; gap:10px;">
         <span id="userNameLabel" style="font-size:13px;"></span>
+        <button id="adminBtn" class="pr-btn pr-btn-outline" style="display:none; padding:6px 10px; font-size:12px;" onclick="window.location.href='admin.html'">Admin</button>
         <button class="logout-btn" onclick="doLogout()">Logout</button>
     </div>
 </div>
@@ -87,6 +88,7 @@
 const session = requireLogin();
 if (session) {
     document.getElementById('userNameLabel').textContent = session.name + ' (' + session.role + ')';
+    if (session.role === 'Admin') document.getElementById('adminBtn').style.display = 'inline-block';
     loadCompanyName();
 }
 
