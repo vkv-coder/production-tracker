@@ -159,11 +159,11 @@ async function loadToday() {
             html += '<button class="pr-btn pr-btn-danger" onclick="markActual(\'' + r.id + '\',\'end\')">Stop</button>';
         }
         if (r.actual_start && r.actual_end) {
-            html += '<span class="pr-badge pr-badge-completed">JOB</span>';
+            html += '<span class="pr-btn pr-btn-success" style="cursor:default;">JOB</span>';
         } else {
-            html += '<span class="pr-badge pr-badge-reject">JOB</span>';
+            html += '<span class="pr-btn pr-btn-danger" style="cursor:default;">JOB</span>';
         }
-        html += '<span class="pr-badge pr-badge-' + (r.inspection_status === 'Accept' ? 'accept' : 'reject') + '" style="margin-left:6px;">INSPECTION</span>';
+        html += '<span class="pr-btn ' + (r.inspection_status === 'Accept' ? 'pr-btn-success' : 'pr-btn-danger') + '" style="cursor:default;">INSPECTION</span>';
         html += '</div></div>';
     });
     container.innerHTML = html;
@@ -193,12 +193,12 @@ async function loadTodayPainting() {
         html += '<div class="pr-card-title">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + (r.pr_jobs && r.pr_jobs.pr_units ? ' [' + r.pr_jobs.pr_units.unit_name + ']' : '') + '</div>';
         html += '<div class="pr-card-sub">' + (r.pr_paint_items_master ? r.pr_paint_items_master.item_name : '') + ' - ' + (r.pr_paint_process_master ? r.pr_paint_process_master.process_name : '') + '</div>';
         html += '<div style="font-size:12px; color:#666;">Started: ' + (r.start_time || '-') + '</div>';
-        html += '<div style="margin-top:8px;">';
+        html += '<div style="margin-top:8px; display:flex; gap:8px; align-items:center;">';
         if (!r.stop_date) {
-            html += '<span class="pr-badge pr-badge-reject" style="margin-right:6px;">JOB</span>';
+            html += '<span class="pr-btn pr-btn-danger" style="cursor:default;">JOB</span>';
             html += '<button class="pr-btn pr-btn-danger" onclick="markPaintStop(\'' + r.id + '\')">Stop</button>';
         } else {
-            html += '<span class="pr-badge pr-badge-completed">JOB</span>';
+            html += '<span class="pr-btn pr-btn-success" style="cursor:default;">JOB</span>';
         }
         html += '</div></div>';
     });
