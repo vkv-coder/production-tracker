@@ -15,96 +15,126 @@
     <h1 style="text-align:center; font-size:22px; color:#1e3a5f; margin-bottom:4px;">Production Tracker</h1>
     <p style="text-align:center; font-size:13px; color:#777; margin-bottom:22px;">Fabrication & Painting Tracking</p>
 
-    <label class="pr-label">Company</label>
-    <select id="companySelect" class="pr-select">
-        <option value="">Loading companies...</option>
-    </select>
+    <div id="loginBox">
+        <label class="pr-label">Email</label>
+        <input type="email" id="emailInput" class="pr-input" placeholder="Enter email">
 
-    <label class="pr-label">Mobile Number</label>
-    <input type="text" id="mobileInput" class="pr-input" placeholder="Enter mobile number">
+        <label class="pr-label">Password</label>
+        <input type="password" id="passwordInput" class="pr-input" placeholder="Enter password">
 
-    <label class="pr-label">Password</label>
-    <input type="password" id="passwordInput" class="pr-input" placeholder="Enter password">
+        <button onclick="doLogin()" class="pr-btn pr-btn-primary" style="width:100%; padding:12px; font-size:15px; margin-top:6px;">Login</button>
 
-    <button onclick="doLogin()" class="pr-btn pr-btn-primary" style="width:100%; padding:12px; font-size:15px; margin-top:6px;">Login</button>
+        <p style="text-align:center; margin-top:14px;">
+            <a href="#" onclick="showForgotBox(); return false;" style="font-size:13px; color:#1e3a5f; text-decoration:underline;">Forgot Password?</a>
+        </p>
+    </div>
+
+    <div id="forgotBox" style="display:none;">
+        <label class="pr-label">Enter your registered email</label>
+        <input type="email" id="forgotEmailInput" class="pr-input" placeholder="Enter email">
+        <button onclick="doForgotPassword()" class="pr-btn pr-btn-primary" style="width:100%; padding:12px; font-size:15px;">Send Reset Link</button>
+        <p style="text-align:center; margin-top:14px;">
+            <a href="#" onclick="showLoginBox(); return false;" style="font-size:13px; color:#1e3a5f; text-decoration:underline;">Back to Login</a>
+        </p>
+    </div>
 
     <p id="errorMsg" style="color:#d9534f; font-size:13px; text-align:center; margin-top:12px; display:none;"></p>
+    <p id="successMsg" style="color:#2e7d32; font-size:13px; text-align:center; margin-top:12px; display:none;"></p>
 
 </div>
 
 <script src="config.js"></script>
 <script>
 
-async function loadCompanies() {
-    const { data, error } = await supabaseClient
-        .from('pr_companies')
-        .select('id, company_name, subdomain_slug')
-        .eq('is_active', true)
-        .order('company_name');
+function showForgotBox() {
+    document.getElementById('loginBox').style.display = 'none';
+    document.getElementById('forgotBox').style.display = 'block';
+    document.getElementById('errorMsg').style.display = 'none';
+    document.getElementById('successMsg').style.display = 'none';
+}
 
-    const sel = document.getElementById('companySelect');
-    sel.innerHTML = '';
-
-    if (error || !data || data.length === 0) {
-        sel.innerHTML = '<option value="">No companies found</option>';
-        return;
-    }
-
-    data.forEach(c => {
-        const opt = document.createElement('option');
-        opt.value = c.id;
-        opt.textContent = c.company_name;
-        sel.appendChild(opt);
-    });
+function showLoginBox() {
+    document.getElementById('loginBox').style.display = 'block';
+    document.getElementById('forgotBox').style.display = 'none';
+    document.getElementById('errorMsg').style.display = 'none';
+    document.getElementById('successMsg').style.display = 'none';
 }
 
 async function doLogin() {
     const errorMsg = document.getElementById('errorMsg');
     errorMsg.style.display = 'none';
 
-    const companyId = document.getElementById('companySelect').value;
-    const mobile = document.getElementById('mobileInput').value.trim();
+    const email = document.getElementById('emailInput').value.trim();
     const password = document.getElementById('passwordInput').value;
 
-    if (!companyId || !mobile || !password) {
-        errorMsg.textContent = 'Please fill all fields';
+    if (!email || !password) {
+        errorMsg.textContent = 'Please enter email and password';
         errorMsg.style.display = 'block';
         return;
     }
 
-    const { data, error } = await supabaseClient
+    const { data: authData, error: authError } = await supabaseClient.auth.signInWithPassword({
+        email: email,
+        password: password
+    });
+
+    if (authError || !authData.user) {
+        errorMsg.textContent = 'Login failed: incorrect email or password';
+        errorMsg.style.display = 'block';
+        return;
+    }
+
+    // Find matching pr_users record linked to this auth user
+    const { data: userData, error: userError } = await supabaseClient
         .from('pr_users')
-        .select('id, name, role, company_id, password_hash')
-        .eq('company_id', companyId)
-        .eq('mobile', mobile)
+        .select('id, name, role, company_id')
+        .eq('auth_user_id', authData.user.id)
         .eq('is_active', true)
         .maybeSingle();
 
-    if (error || !data) {
-        errorMsg.textContent = 'User not found';
-        errorMsg.style.display = 'block';
-        return;
-    }
-
-    // NOTE: simple plaintext check for now (password_hash stores plain password).
-    // Can be upgraded to real hashing later if needed.
-    if (data.password_hash !== password) {
-        errorMsg.textContent = 'Incorrect password';
+    if (userError || !userData) {
+        errorMsg.textContent = 'Your login is not linked to any company. Contact admin.';
         errorMsg.style.display = 'block';
         return;
     }
 
     setSession({
-        userId: data.id,
-        name: data.name,
-        role: data.role,
-        companyId: data.company_id
+        userId: userData.id,
+        name: userData.name,
+        role: userData.role,
+        companyId: userData.company_id
     });
 
     window.location.href = 'home.html';
 }
 
-loadCompanies();
+async function doForgotPassword() {
+    const errorMsg = document.getElementById('errorMsg');
+    const successMsg = document.getElementById('successMsg');
+    errorMsg.style.display = 'none';
+    successMsg.style.display = 'none';
+
+    const email = document.getElementById('forgotEmailInput').value.trim();
+    if (!email) {
+        errorMsg.textContent = 'Please enter your email';
+        errorMsg.style.display = 'block';
+        return;
+    }
+
+    const { error } = await supabaseClient.auth.resetPasswordForEmail(email, {
+        redirectTo: 'https://production.anyapps.in/reset-password.html'
+    });
+
+    if (error) {
+        errorMsg.textContent = 'Could not send reset link. Try again.';
+        errorMsg.style.display = 'block';
+        return;
+    }
+
+    successMsg.textContent = 'Reset link sent! Check your email.';
+    successMsg.style.display = 'block';
+}
+
 </script>
 
 </body>
