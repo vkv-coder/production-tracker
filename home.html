@@ -30,16 +30,11 @@
 
     <!-- TODAY TAB -->
     <div id="tab-today" class="tab-content">
-        <div style="display:flex; gap:8px; margin-bottom:12px;">
-            <button id="todaySubJobBtn" class="pr-btn pr-btn-primary" onclick="switchTodaySub('job')">Job</button>
-            <button id="todaySubInspBtn" class="pr-btn pr-btn-outline" onclick="switchTodaySub('inspection')">Inspection</button>
-        </div>
         <div id="todayJobView">
             <div id="todayList"><p class="pr-empty">Loading...</p></div>
             <h3 style="margin:16px 0 8px; font-size:14px; color:#1e3a5f;">Painting (Started Today)</h3>
             <div id="todayPaintList"><p class="pr-empty">Loading...</p></div>
         </div>
-        <div id="todayInspView" style="display:none;"><div id="todayInspList"><p class="pr-empty">Loading...</p></div></div>
     </div>
 
     <!-- TOMORROW TAB -->
@@ -164,11 +159,11 @@ async function loadToday() {
             html += '<button class="pr-btn pr-btn-danger" onclick="markActual(\'' + r.id + '\',\'end\')">Stop</button>';
         }
         if (r.actual_start && r.actual_end) {
-            html += '<span class="pr-badge pr-badge-completed">Job</span>';
+            html += '<span class="pr-badge pr-badge-completed">JOB</span>';
         } else {
-            html += '<span class="pr-badge pr-badge-pending">Job</span>';
+            html += '<span class="pr-badge pr-badge-reject">JOB</span>';
         }
-        html += '<span class="pr-badge pr-badge-' + (r.inspection_status === 'Accept' ? 'accept' : 'reject') + '" style="margin-left:6px;">Inspection</span>';
+        html += '<span class="pr-badge pr-badge-' + (r.inspection_status === 'Accept' ? 'accept' : 'reject') + '" style="margin-left:6px;">INSPECTION</span>';
         html += '</div></div>';
     });
     container.innerHTML = html;
@@ -200,10 +195,10 @@ async function loadTodayPainting() {
         html += '<div style="font-size:12px; color:#666;">Started: ' + (r.start_time || '-') + '</div>';
         html += '<div style="margin-top:8px;">';
         if (!r.stop_date) {
-            html += '<span class="pr-badge pr-badge-pending" style="margin-right:6px;">Job</span>';
+            html += '<span class="pr-badge pr-badge-reject" style="margin-right:6px;">JOB</span>';
             html += '<button class="pr-btn pr-btn-danger" onclick="markPaintStop(\'' + r.id + '\')">Stop</button>';
         } else {
-            html += '<span class="pr-badge pr-badge-completed">Job</span>';
+            html += '<span class="pr-badge pr-badge-completed">JOB</span>';
         }
         html += '</div></div>';
     });
@@ -224,44 +219,6 @@ async function markActual(trackingId, type) {
     const { error } = await supabaseClient.from('pr_fab_tracking').update(updateObj).eq('id', trackingId);
     if (error) { alert('Error updating: ' + error.message); return; }
     loadToday();
-}
-
-function switchTodaySub(sub) {
-    document.getElementById('todayJobView').style.display = sub === 'job' ? 'block' : 'none';
-    document.getElementById('todayInspView').style.display = sub === 'inspection' ? 'block' : 'none';
-    document.getElementById('todaySubJobBtn').className = 'pr-btn ' + (sub === 'job' ? 'pr-btn-primary' : 'pr-btn-outline');
-    document.getElementById('todaySubInspBtn').className = 'pr-btn ' + (sub === 'inspection' ? 'pr-btn-primary' : 'pr-btn-outline');
-    if (sub === 'inspection') loadTodayInspection();
-}
-
-async function loadTodayInspection() {
-    const container = document.getElementById('todayInspList');
-    container.innerHTML = '<p class="pr-empty">Loading...</p>';
-    const today = todayStr(0);
-
-    const { data: fabRows } = await supabaseClient
-        .from('pr_fab_tracking')
-        .select('id, actual_end, inspection_status, job_id, pr_jobs(job_no, company_id, pr_units(unit_name)), pr_fab_steps_master(step_name)')
-        .eq('actual_end', today);
-
-    const relevant = (fabRows || []).filter(r => r.pr_jobs && r.pr_jobs.company_id === session.companyId);
-
-    if (relevant.length === 0) {
-        container.innerHTML = '<p class="pr-empty">No steps completed today needing inspection.</p>';
-        return;
-    }
-
-    let html = '';
-    relevant.forEach(r => {
-        const isDone = r.inspection_status === 'Accept';
-        const bgColor = isDone ? '#d4edda' : '#f8d7da';
-        html += '<div class="pr-card" style="background:' + bgColor + ';">';
-        html += '<div class="pr-card-title">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + (r.pr_jobs && r.pr_jobs.pr_units ? ' [' + r.pr_jobs.pr_units.unit_name + ']' : '') + '</div>';
-        html += '<div class="pr-card-sub">' + (r.pr_fab_steps_master ? r.pr_fab_steps_master.step_name : '') + '</div>';
-        html += '<span class="pr-badge pr-badge-' + (isDone ? 'accept' : 'pending') + '">' + r.inspection_status + '</span>';
-        html += '</div>';
-    });
-    container.innerHTML = html;
 }
 
 // ============ TOMORROW TAB ============
