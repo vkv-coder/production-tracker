@@ -34,7 +34,11 @@
             <button id="todaySubJobBtn" class="pr-btn pr-btn-primary" onclick="switchTodaySub('job')">Job</button>
             <button id="todaySubInspBtn" class="pr-btn pr-btn-outline" onclick="switchTodaySub('inspection')">Inspection</button>
         </div>
-        <div id="todayJobView"><div id="todayList"><p class="pr-empty">Loading...</p></div></div>
+        <div id="todayJobView">
+            <div id="todayList"><p class="pr-empty">Loading...</p></div>
+            <h3 style="margin:16px 0 8px; font-size:14px; color:#1e3a5f;">Painting (Started Today)</h3>
+            <div id="todayPaintList"><p class="pr-empty">Loading...</p></div>
+        </div>
         <div id="todayInspView" style="display:none;"><div id="todayInspList"><p class="pr-empty">Loading...</p></div></div>
     </div>
 
@@ -123,21 +127,35 @@ async function loadToday() {
     const { data: fabRows } = await supabaseClient
         .from('pr_fab_tracking')
         .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, job_id, pr_jobs(job_no, company_id, pr_units(unit_name)), pr_fab_steps_master(step_name)')
-        .or('planned_start.eq.' + today + ',planned_end.eq.' + today);
+        .is('actual_end', null);
 
-    const relevant = (fabRows || []).filter(r => r.pr_jobs && r.pr_jobs.company_id === session.companyId);
+    const relevant = (fabRows || []).filter(r => {
+        if (!r.pr_jobs || r.pr_jobs.company_id !== session.companyId) return false;
+        const dueToday = r.planned_start === today || r.planned_end === today;
+        const overdue = (r.planned_start && r.planned_start < today && !r.actual_start) || (r.planned_end && r.planned_end < today);
+        const ongoing = r.actual_start && !r.actual_end;
+        return dueToday || overdue || ongoing;
+    });
 
     if (relevant.length === 0) {
         container.innerHTML = '<p class="pr-empty">No fabrication steps scheduled for today.</p>';
         return;
     }
 
+    // Sort overdue first
+    relevant.sort((a, b) => {
+        const aOverdue = (a.planned_end && a.planned_end < today) ? 1 : 0;
+        const bOverdue = (b.planned_end && b.planned_end < today) ? 1 : 0;
+        return bOverdue - aOverdue;
+    });
+
     let html = '';
     relevant.forEach(r => {
-        html += '<div class="pr-card">';
+        const isOverdue = (r.planned_start && r.planned_start < today && !r.actual_start) || (r.planned_end && r.planned_end < today && !r.actual_end);
+        html += '<div class="pr-card" style="' + (isOverdue ? 'background:#f8d7da; border:1px solid #d9534f;' : '') + '">';
         html += '<div class="pr-card-title">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + (r.pr_jobs && r.pr_jobs.pr_units ? ' [' + r.pr_jobs.pr_units.unit_name + ']' : '') + '</div>';
         html += '<div class="pr-card-sub">' + (r.pr_fab_steps_master ? r.pr_fab_steps_master.step_name : '') + '</div>';
-        html += '<div style="font-size:12px; color:#666;">Planned: ' + (r.planned_start || '-') + ' to ' + (r.planned_end || '-') + '</div>';
+        html += '<div style="font-size:12px; color:' + (isOverdue ? '#a00' : '#666') + ';">Planned: ' + (r.planned_start || '-') + ' to ' + (r.planned_end || '-') + (isOverdue ? ' &mdash; OVERDUE' : '') + '</div>';
         html += '<div style="margin-top:8px; display:flex; gap:8px;">';
         if (!r.actual_start) {
             html += '<button class="pr-btn pr-btn-success" onclick="markActual(\'' + r.id + '\',\'start\')">Start</button>';
@@ -151,6 +169,49 @@ async function loadToday() {
         html += '</div></div>';
     });
     container.innerHTML = html;
+    loadTodayPainting();
+}
+
+async function loadTodayPainting() {
+    const container = document.getElementById('todayPaintList');
+    container.innerHTML = '<p class="pr-empty">Loading...</p>';
+    const today = todayStr(0);
+
+    const { data: paintRows } = await supabaseClient
+        .from('pr_paint_tracking')
+        .select('id, start_date, start_time, stop_date, stop_time, job_id, pr_jobs(job_no, company_id, pr_units(unit_name)), pr_paint_items_master(item_name), pr_paint_process_master(process_name)')
+        .eq('start_date', today);
+
+    const relevant = (paintRows || []).filter(r => r.pr_jobs && r.pr_jobs.company_id === session.companyId);
+
+    if (relevant.length === 0) {
+        container.innerHTML = '<p class="pr-empty">No painting processes started today.</p>';
+        return;
+    }
+
+    let html = '';
+    relevant.forEach(r => {
+        html += '<div class="pr-card">';
+        html += '<div class="pr-card-title">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + (r.pr_jobs && r.pr_jobs.pr_units ? ' [' + r.pr_jobs.pr_units.unit_name + ']' : '') + '</div>';
+        html += '<div class="pr-card-sub">' + (r.pr_paint_items_master ? r.pr_paint_items_master.item_name : '') + ' - ' + (r.pr_paint_process_master ? r.pr_paint_process_master.process_name : '') + '</div>';
+        html += '<div style="font-size:12px; color:#666;">Started: ' + (r.start_time || '-') + '</div>';
+        html += '<div style="margin-top:8px;">';
+        if (!r.stop_date) {
+            html += '<button class="pr-btn pr-btn-danger" onclick="markPaintStop(\'' + r.id + '\')">Stop</button>';
+        } else {
+            html += '<span class="pr-badge pr-badge-completed">Done</span>';
+        }
+        html += '</div></div>';
+    });
+    container.innerHTML = html;
+}
+
+async function markPaintStop(trackingId) {
+    const today = todayStr(0);
+    const now = new Date().toTimeString().slice(0,5);
+    const { error } = await supabaseClient.from('pr_paint_tracking').update({ stop_date: today, stop_time: now }).eq('id', trackingId);
+    if (error) { alert('Error updating: ' + error.message); return; }
+    loadTodayPainting();
 }
 
 async function markActual(trackingId, type) {
