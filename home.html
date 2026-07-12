@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Production Tracker - Home</title>
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div class="pr-header">
+    <h1 id="companyNameHeader">Production Tracker</h1>
+    <div style="display:flex; align-items:center; gap:10px;">
+        <span id="userNameLabel" style="font-size:13px;"></span>
+        <button class="logout-btn" onclick="doLogout()">Logout</button>
+    </div>
+</div>
+
+<div class="pr-tabs">
+    <div class="pr-tab active" data-tab="today" onclick="switchTab('today')">Today</div>
+    <div class="pr-tab" data-tab="tomorrow" onclick="switchTab('tomorrow')">Tomorrow</div>
+    <div class="pr-tab" data-tab="manual" onclick="switchTab('manual')">Manual</div>
+    <div class="pr-tab" data-tab="summary" onclick="switchTab('summary')">Summary</div>
+    <div class="pr-tab" data-tab="status" onclick="switchTab('status')">Job Status</div>
+</div>
+
+<div class="pr-container">
+
+    <!-- TODAY TAB -->
+    <div id="tab-today" class="tab-content">
+        <div id="todayList"><p class="pr-empty">Loading...</p></div>
+    </div>
+
+    <!-- TOMORROW TAB -->
+    <div id="tab-tomorrow" class="tab-content" style="display:none;">
+        <div id="tomorrowList"><p class="pr-empty">Loading...</p></div>
+    </div>
+
+    <!-- MANUAL ASSIGNMENT TAB -->
+    <div id="tab-manual" class="tab-content" style="display:none;">
+        <label class="pr-label">Select Job</label>
+        <select id="manualJobSelect" class="pr-select" onchange="loadManualJob()">
+            <option value="">-- Select Job --</option>
+        </select>
+        <div id="manualJobDetail"></div>
+    </div>
+
+    <!-- SUMMARY TAB -->
+    <div id="tab-summary" class="tab-content" style="display:none;">
+        <div id="summaryList"><p class="pr-empty">Loading...</p></div>
+    </div>
+
+    <!-- JOB STATUS TAB -->
+    <div id="tab-status" class="tab-content" style="display:none;">
+        <select id="statusFilter" class="pr-select" onchange="loadJobStatus()">
+            <option value="all">All Status</option>
+            <option value="Running">Running</option>
+            <option value="Completed">Completed</option>
+            <option value="On Hold">On Hold</option>
+        </select>
+        <div id="statusList"><p class="pr-empty">Loading...</p></div>
+    </div>
+
+</div>
+
+<a href="new-job.html" class="pr-fab">+</a>
+
+<script src="config.js"></script>
+<script>
+
+const session = requireLogin();
+if (session) {
+    document.getElementById('userNameLabel').textContent = session.name + ' (' + session.role + ')';
+    loadCompanyName();
+}
+
+async function loadCompanyName() {
+    const { data } = await supabaseClient.from('pr_companies').select('company_name').eq('id', session.companyId).maybeSingle();
+    if (data) document.getElementById('companyNameHeader').textContent = data.company_name + ' - Production Tracker';
+}
+
+function doLogout() {
+    clearSession();
+    window.location.href = 'index.html';
+}
+
+function switchTab(tab) {
+    document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.pr-tab').forEach(el => el.classList.remove('active'));
+    document.getElementById('tab-' + tab).style.display = 'block';
+    document.querySelector('.pr-tab[data-tab="' + tab + '"]').classList.add('active');
+
+    if (tab === 'today') loadToday();
+    if (tab === 'tomorrow') loadTomorrow();
+    if (tab === 'manual') loadManualJobList();
+    if (tab === 'summary') loadSummary();
+    if (tab === 'status') loadJobStatus();
+}
+
+function todayStr(offsetDays) {
+    const d = new Date();
+    d.setDate(d.getDate() + (offsetDays || 0));
+    return d.toISOString().split('T')[0];
+}
+
+// ============ TODAY TAB ============
+async function loadToday() {
+    const container = document.getElementById('todayList');
+    container.innerHTML = '<p class="pr-empty">Loading...</p>';
+    const today = todayStr(0);
+
+    const { data: fabRows } = await supabaseClient
+        .from('pr_fab_tracking')
+        .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, job_id, pr_jobs(job_no, company_id), pr_fab_steps_master(step_name)')
+        .or('planned_start.eq.' + today + ',planned_end.eq.' + today);
+
+    const relevant = (fabRows || []).filter(r => r.pr_jobs && r.pr_jobs.company_id === session.companyId);
+
+    if (relevant.length === 0) {
+        container.innerHTML = '<p class="pr-empty">No fabrication steps scheduled for today.</p>';
+        return;
+    }
+
+    let html = '';
+    relevant.forEach(r => {
+        html += '<div class="pr-card">';
+        html += '<div class="pr-card-title">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + '</div>';
+        html += '<div class="pr-card-sub">' + (r.pr_fab_steps_master ? r.pr_fab_steps_master.step_name : '') + '</div>';
+        html += '<div style="font-size:12px; color:#666;">Planned: ' + (r.planned_start || '-') + ' to ' + (r.planned_end || '-') + '</div>';
+        html += '<div style="margin-top:8px; display:flex; gap:8px;">';
+        if (!r.actual_start) {
+            html += '<button class="pr-btn pr-btn-success" onclick="markActual(\'' + r.id + '\',\'start\')">Start</button>';
+        }
+        if (r.actual_start && !r.actual_end) {
+            html += '<button class="pr-btn pr-btn-danger" onclick="markActual(\'' + r.id + '\',\'end\')">Stop</button>';
+        }
+        if (r.actual_start && r.actual_end) {
+            html += '<span class="pr-badge pr-badge-completed">Done</span>';
+        }
+        html += '</div></div>';
+    });
+    container.innerHTML = html;
+}
+
+async function markActual(trackingId, type) {
+    const today = todayStr(0);
+    const updateObj = type === 'start' ? { actual_start: today } : { actual_end: today };
+    const { error } = await supabaseClient.from('pr_fab_tracking').update(updateObj).eq('id', trackingId);
+    if (error) { alert('Error updating: ' + error.message); return; }
+    loadToday();
+}
+
+// ============ TOMORROW TAB ============
+async function loadTomorrow() {
+    const container = document.getElementById('tomorrowList');
+    container.innerHTML = '<p class="pr-empty">Loading...</p>';
+    const tomorrow = todayStr(1);
+
+    const { data: fabRows } = await supabaseClient
+        .from('pr_fab_tracking')
+        .select('id, planned_start, planned_end, job_id, pr_jobs(job_no, company_id), pr_fab_steps_master(step_name)')
+        .or('planned_start.eq.' + tomorrow + ',planned_end.eq.' + tomorrow);
+
+    const relevant = (fabRows || []).filter(r => r.pr_jobs && r.pr_jobs.company_id === session.companyId);
+
+    if (relevant.length === 0) {
+        container.innerHTML = '<p class="pr-empty">Nothing scheduled for tomorrow.</p>';
+        return;
+    }
+
+    let html = '';
+    relevant.forEach(r => {
+        html += '<div class="pr-card">';
+        html += '<div class="pr-card-title">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + '</div>';
+        html += '<div class="pr-card-sub">' + (r.pr_fab_steps_master ? r.pr_fab_steps_master.step_name : '') + '</div>';
+        html += '<div style="font-size:12px; color:#666;">Planned: ' + (r.planned_start || '-') + ' to ' + (r.planned_end || '-') + '</div>';
+        html += '</div>';
+    });
+    container.innerHTML = html;
+}
+
+// ============ MANUAL ASSIGNMENT TAB ============
+async function loadManualJobList() {
+    const { data } = await supabaseClient
+        .from('pr_jobs')
+        .select('id, job_no')
+        .eq('company_id', session.companyId)
+        .order('created_at', { ascending: false });
+
+    const sel = document.getElementById('manualJobSelect');
+    sel.innerHTML = '<option value="">-- Select Job --</option>';
+    (data || []).forEach(j => {
+        const opt = document.createElement('option');
+        opt.value = j.id;
+        opt.textContent = j.job_no;
+        sel.appendChild(opt);
+    });
+}
+
+async function loadManualJob() {
+    const jobId = document.getElementById('manualJobSelect').value;
+    const detailDiv = document.getElementById('manualJobDetail');
+    if (!jobId) { detailDiv.innerHTML = ''; return; }
+    window.location.href = 'job-detail.html?job=' + jobId;
+}
+
+// ============ SUMMARY TAB ============
+async function loadSummary() {
+    const container = document.getElementById('summaryList');
+    container.innerHTML = '<p class="pr-empty">Loading...</p>';
+
+    const { data: jobs } = await supabaseClient
+        .from('pr_jobs')
+        .select('id, job_no, customer_name, status')
+        .eq('company_id', session.companyId)
+        .order('created_at', { ascending: false });
+
+    if (!jobs || jobs.length === 0) {
+        container.innerHTML = '<p class="pr-empty">No jobs yet. Tap + to add one.</p>';
+        return;
+    }
+
+    let html = '';
+    for (const job of jobs) {
+        const { data: fabData } = await supabaseClient.from('pr_fab_tracking').select('actual_end').eq('job_id', job.id);
+        const fabTotal = (fabData || []).length;
+        const fabDone = (fabData || []).filter(f => f.actual_end).length;
+
+        const { data: paintData } = await supabaseClient
+            .from('pr_paint_tracking')
+            .select('stop_date, paint_item_id, pr_paint_items_master(item_name)')
+            .eq('job_id', job.id);
+
+        const paintByItem = {};
+        (paintData || []).forEach(p => {
+            const name = p.pr_paint_items_master ? p.pr_paint_items_master.item_name : 'Item';
+            if (!paintByItem[name]) paintByItem[name] = { total: 0, done: 0 };
+            paintByItem[name].total++;
+            if (p.stop_date) paintByItem[name].done++;
+        });
+
+        let paintHtml = '';
+        Object.keys(paintByItem).forEach(name => {
+            const p = paintByItem[name];
+            const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
+            paintHtml += '<div style="font-size:12px; margin-top:4px;">' + name + ': ' + p.done + '/' + p.total + '</div>';
+            paintHtml += '<div class="pr-progress-bg"><div class="pr-progress-fill" style="width:' + pct + '%;"></div></div>';
+        });
+
+        const fabPct = fabTotal ? Math.round((fabDone / fabTotal) * 100) : 0;
+
+        html += '<div class="pr-card" style="cursor:pointer;" onclick="window.location.href=\'job-detail.html?job=' + job.id + '\'">';
+        html += '<div class="pr-card-title">' + job.job_no + '</div>';
+        html += '<div class="pr-card-sub">' + (job.customer_name || '') + ' &middot; <span class="pr-badge pr-badge-' + (job.status === 'Completed' ? 'completed' : 'running') + '">' + job.status + '</span></div>';
+        html += '<div style="font-size:12px; margin-top:6px;">Fabrication: ' + fabDone + '/' + fabTotal + '</div>';
+        html += '<div class="pr-progress-bg"><div class="pr-progress-fill" style="width:' + fabPct + '%;"></div></div>';
+        html += paintHtml;
+        html += '</div>';
+    }
+    container.innerHTML = html;
+}
+
+// ============ JOB STATUS TAB ============
+async function loadJobStatus() {
+    const container = document.getElementById('statusList');
+    container.innerHTML = '<p class="pr-empty">Loading...</p>';
+    const filter = document.getElementById('statusFilter').value;
+
+    let query = supabaseClient.from('pr_jobs').select('id, job_no, customer_name, status, pr_units(unit_name)').eq('company_id', session.companyId);
+    if (filter !== 'all') query = query.eq('status', filter);
+
+    const { data } = await query.order('created_at', { ascending: false });
+
+    if (!data || data.length === 0) {
+        container.innerHTML = '<p class="pr-empty">No jobs found.</p>';
+        return;
+    }
+
+    let html = '<table class="pr-table"><tr><th>Job No</th><th>Customer</th><th>Unit</th><th>Status</th></tr>';
+    data.forEach(j => {
+        html += '<tr style="cursor:pointer;" onclick="window.location.href=\'job-detail.html?job=' + j.id + '\'">';
+        html += '<td>' + j.job_no + '</td>';
+        html += '<td>' + (j.customer_name || '-') + '</td>';
+        html += '<td>' + (j.pr_units ? j.pr_units.unit_name : '-') + '</td>';
+        html += '<td><span class="pr-badge pr-badge-' + (j.status === 'Completed' ? 'completed' : 'running') + '">' + j.status + '</span></td>';
+        html += '</tr>';
+    });
+    html += '</table>';
+    container.innerHTML = html;
+}
+
+// Initial load
+if (session) loadToday();
+
+</script>
+
+</body>
+</html>
