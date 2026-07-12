@@ -164,8 +164,11 @@ async function loadToday() {
             html += '<button class="pr-btn pr-btn-danger" onclick="markActual(\'' + r.id + '\',\'end\')">Stop</button>';
         }
         if (r.actual_start && r.actual_end) {
-            html += '<span class="pr-badge pr-badge-completed">Done</span>';
+            html += '<span class="pr-badge pr-badge-completed">Job</span>';
+        } else {
+            html += '<span class="pr-badge pr-badge-pending">Job</span>';
         }
+        html += '<span class="pr-badge pr-badge-' + (r.inspection_status === 'Accept' ? 'accept' : 'reject') + '" style="margin-left:6px;">Inspection</span>';
         html += '</div></div>';
     });
     container.innerHTML = html;
@@ -197,9 +200,10 @@ async function loadTodayPainting() {
         html += '<div style="font-size:12px; color:#666;">Started: ' + (r.start_time || '-') + '</div>';
         html += '<div style="margin-top:8px;">';
         if (!r.stop_date) {
+            html += '<span class="pr-badge pr-badge-pending" style="margin-right:6px;">Job</span>';
             html += '<button class="pr-btn pr-btn-danger" onclick="markPaintStop(\'' + r.id + '\')">Stop</button>';
         } else {
-            html += '<span class="pr-badge pr-badge-completed">Done</span>';
+            html += '<span class="pr-badge pr-badge-completed">Job</span>';
         }
         html += '</div></div>';
     });
