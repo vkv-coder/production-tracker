@@ -43,6 +43,7 @@ const urlParams = new URLSearchParams(window.location.search);
 const jobId = urlParams.get('job');
 
 let inspectorsList = [];
+let workersList = [];
 let paintItems = [];
 let currentPaintItemId = null;
 
@@ -61,6 +62,9 @@ async function init() {
 
     const { data: insp } = await supabaseClient.from('pr_inspectors').select('id, inspector_name').eq('company_id', session.companyId).eq('is_active', true);
     inspectorsList = insp || [];
+
+    const { data: wrk } = await supabaseClient.from('pr_workers').select('id, worker_name').eq('company_id', session.companyId).eq('is_active', true);
+    workersList = wrk || [];
 
     const { data: items } = await supabaseClient.from('pr_paint_items_master').select('id, item_name').eq('company_id', session.companyId).eq('is_active', true);
     paintItems = items || [];
@@ -83,7 +87,7 @@ async function loadFabTable() {
 
     const { data } = await supabaseClient
         .from('pr_fab_tracking')
-        .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, inspector_id, remarks, pr_fab_steps_master(step_name, step_order)')
+        .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, inspector_id, worker_id, remarks, pr_fab_steps_master(step_name, step_order)')
         .eq('job_id', jobId);
 
     if (!data || data.length === 0) {
@@ -118,6 +122,12 @@ async function loadFabTable() {
 
         html += '<label class="pr-label">Inspector</label>';
         html += '<select class="pr-select" onchange="updateFabField(\'' + r.id + '\',\'inspector_id\',this.value)"><option value="">-- Select --</option>' + inspOptions + '</select>';
+
+        const workerOptions = workersList.map(w =>
+            '<option value="' + w.id + '"' + (r.worker_id === w.id ? ' selected' : '') + '>' + w.worker_name + '</option>'
+        ).join('');
+        html += '<label class="pr-label">Worker</label>';
+        html += '<select class="pr-select" onchange="updateFabField(\'' + r.id + '\',\'worker_id\',this.value)"><option value="">-- Select --</option>' + workerOptions + '</select>';
 
         html += '<label class="pr-label">Remarks</label>';
         html += '<input type="text" class="pr-input" value="' + (r.remarks || '').replace(/"/g, '&quot;') + '" onchange="updateFabField(\'' + r.id + '\',\'remarks\',this.value)">';

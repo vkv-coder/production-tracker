@@ -24,6 +24,7 @@
     <div class="pr-tab" data-tab="manual" onclick="switchTab('manual')">Manual</div>
     <div class="pr-tab" data-tab="summary" onclick="switchTab('summary')">Summary</div>
     <div class="pr-tab" data-tab="status" onclick="switchTab('status')">Job Status</div>
+    <div class="pr-tab" data-tab="workers" onclick="switchTab('workers')">Workers</div>
 </div>
 
 <div class="pr-container">
@@ -71,6 +72,11 @@
         <div id="statusList"><p class="pr-empty">Loading...</p></div>
     </div>
 
+    <!-- WORKERS TAB -->
+    <div id="tab-workers" class="tab-content" style="display:none;">
+        <div id="workersList"><p class="pr-empty">Loading...</p></div>
+    </div>
+
 </div>
 
 <a href="new-job.html" class="pr-fab">+</a>
@@ -105,6 +111,7 @@ function switchTab(tab) {
     if (tab === 'manual') { loadManualUnitOptions(); loadManualJobList(); }
     if (tab === 'summary') loadSummary();
     if (tab === 'status') loadJobStatus();
+    if (tab === 'workers') loadWorkerBoard();
 }
 
 function todayStr(offsetDays) {
@@ -379,6 +386,57 @@ async function loadJobStatus() {
         html += '</tr>';
     }
     html += '</table>';
+    container.innerHTML = html;
+}
+
+// ============ WORKERS TAB ============
+async function loadWorkerBoard() {
+    const container = document.getElementById('workersList');
+    container.innerHTML = '<p class="pr-empty">Loading...</p>';
+
+    const { data: workers } = await supabaseClient
+        .from('pr_workers')
+        .select('id, worker_name')
+        .eq('company_id', session.companyId)
+        .eq('is_active', true)
+        .order('worker_name');
+
+    if (!workers || workers.length === 0) {
+        container.innerHTML = '<p class="pr-empty">No workers added yet. Add from Admin panel.</p>';
+        return;
+    }
+
+    // Find all ongoing steps (started but not finished) with a worker assigned
+    const { data: ongoing } = await supabaseClient
+        .from('pr_fab_tracking')
+        .select('worker_id, job_id, pr_jobs(job_no, company_id), pr_fab_steps_master(step_name)')
+        .not('actual_start', 'is', null)
+        .is('actual_end', null)
+        .not('worker_id', 'is', null);
+
+    const busyMap = {};
+    (ongoing || []).forEach(o => {
+        if (o.pr_jobs && o.pr_jobs.company_id === session.companyId) {
+            busyMap[o.worker_id] = {
+                job_no: o.pr_jobs.job_no,
+                step_name: o.pr_fab_steps_master ? o.pr_fab_steps_master.step_name : ''
+            };
+        }
+    });
+
+    let html = '';
+    workers.forEach(w => {
+        const busy = busyMap[w.id];
+        html += '<div class="pr-card" style="' + (busy ? 'background:#f8d7da;' : 'background:#d4edda;') + '">';
+        html += '<div class="pr-card-title">' + w.worker_name + '</div>';
+        if (busy) {
+            html += '<div class="pr-card-sub">Busy: ' + busy.job_no + ' - ' + busy.step_name + '</div>';
+            html += '<span class="pr-btn pr-btn-danger" style="cursor:default;">BUSY</span>';
+        } else {
+            html += '<span class="pr-btn pr-btn-success" style="cursor:default;">FREE</span>';
+        }
+        html += '</div>';
+    });
     container.innerHTML = html;
 }
 
