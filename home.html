@@ -113,7 +113,7 @@ async function loadToday() {
 
     const { data: fabRows } = await supabaseClient
         .from('pr_fab_tracking')
-        .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, job_id, pr_jobs(job_no, company_id), pr_fab_steps_master(step_name)')
+        .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, job_id, pr_jobs(job_no, company_id, pr_units(unit_name)), pr_fab_steps_master(step_name)')
         .or('planned_start.eq.' + today + ',planned_end.eq.' + today);
 
     const relevant = (fabRows || []).filter(r => r.pr_jobs && r.pr_jobs.company_id === session.companyId);
@@ -126,7 +126,7 @@ async function loadToday() {
     let html = '';
     relevant.forEach(r => {
         html += '<div class="pr-card">';
-        html += '<div class="pr-card-title">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + '</div>';
+        html += '<div class="pr-card-title">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + (r.pr_jobs && r.pr_jobs.pr_units ? ' [' + r.pr_jobs.pr_units.unit_name + ']' : '') + '</div>';
         html += '<div class="pr-card-sub">' + (r.pr_fab_steps_master ? r.pr_fab_steps_master.step_name : '') + '</div>';
         html += '<div style="font-size:12px; color:#666;">Planned: ' + (r.planned_start || '-') + ' to ' + (r.planned_end || '-') + '</div>';
         html += '<div style="margin-top:8px; display:flex; gap:8px;">';
@@ -160,7 +160,7 @@ async function loadTomorrow() {
 
     const { data: fabRows } = await supabaseClient
         .from('pr_fab_tracking')
-        .select('id, planned_start, planned_end, job_id, pr_jobs(job_no, company_id), pr_fab_steps_master(step_name)')
+        .select('id, planned_start, planned_end, job_id, pr_jobs(job_no, company_id, pr_units(unit_name)), pr_fab_steps_master(step_name)')
         .or('planned_start.eq.' + tomorrow + ',planned_end.eq.' + tomorrow);
 
     const relevant = (fabRows || []).filter(r => r.pr_jobs && r.pr_jobs.company_id === session.companyId);
@@ -173,7 +173,7 @@ async function loadTomorrow() {
     let html = '';
     relevant.forEach(r => {
         html += '<div class="pr-card">';
-        html += '<div class="pr-card-title">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + '</div>';
+        html += '<div class="pr-card-title">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + (r.pr_jobs && r.pr_jobs.pr_units ? ' [' + r.pr_jobs.pr_units.unit_name + ']' : '') + '</div>';
         html += '<div class="pr-card-sub">' + (r.pr_fab_steps_master ? r.pr_fab_steps_master.step_name : '') + '</div>';
         html += '<div style="font-size:12px; color:#666;">Planned: ' + (r.planned_start || '-') + ' to ' + (r.planned_end || '-') + '</div>';
         html += '</div>';
@@ -213,7 +213,7 @@ async function loadSummary() {
 
     const { data: jobs } = await supabaseClient
         .from('pr_jobs')
-        .select('id, job_no, customer_name, status')
+        .select('id, job_no, customer_name, status, pr_units(unit_name)')
         .eq('company_id', session.companyId)
         .order('created_at', { ascending: false });
 
@@ -252,7 +252,7 @@ async function loadSummary() {
         const fabPct = fabTotal ? Math.round((fabDone / fabTotal) * 100) : 0;
 
         html += '<div class="pr-card" style="cursor:pointer;" onclick="window.location.href=\'job-detail.html?job=' + job.id + '\'">';
-        html += '<div class="pr-card-title">' + job.job_no + '</div>';
+        html += '<div class="pr-card-title">' + job.job_no + (job.pr_units ? ' [' + job.pr_units.unit_name + ']' : '') + '</div>';
         html += '<div class="pr-card-sub">' + (job.customer_name || '') + ' &middot; <span class="pr-badge pr-badge-' + (job.status === 'Completed' ? 'completed' : 'running') + '">' + job.status + '</span></div>';
         html += '<div style="font-size:12px; margin-top:6px;">Fabrication: ' + fabDone + '/' + fabTotal + '</div>';
         html += '<div class="pr-progress-bg"><div class="pr-progress-fill" style="width:' + fabPct + '%;"></div></div>';
