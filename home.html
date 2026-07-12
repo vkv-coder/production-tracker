@@ -30,7 +30,12 @@
 
     <!-- TODAY TAB -->
     <div id="tab-today" class="tab-content">
-        <div id="todayList"><p class="pr-empty">Loading...</p></div>
+        <div style="display:flex; gap:8px; margin-bottom:12px;">
+            <button id="todaySubJobBtn" class="pr-btn pr-btn-primary" onclick="switchTodaySub('job')">Job</button>
+            <button id="todaySubInspBtn" class="pr-btn pr-btn-outline" onclick="switchTodaySub('inspection')">Inspection</button>
+        </div>
+        <div id="todayJobView"><div id="todayList"><p class="pr-empty">Loading...</p></div></div>
+        <div id="todayInspView" style="display:none;"><div id="todayInspList"><p class="pr-empty">Loading...</p></div></div>
     </div>
 
     <!-- TOMORROW TAB -->
@@ -40,6 +45,10 @@
 
     <!-- MANUAL ASSIGNMENT TAB -->
     <div id="tab-manual" class="tab-content" style="display:none;">
+        <label class="pr-label">Filter by Unit</label>
+        <select id="manualUnitFilter" class="pr-select" onchange="loadManualJobList()">
+            <option value="all">All Units</option>
+        </select>
         <label class="pr-label">Select Job</label>
         <select id="manualJobSelect" class="pr-select" onchange="loadManualJob()">
             <option value="">-- Select Job --</option>
@@ -94,7 +103,7 @@ function switchTab(tab) {
 
     if (tab === 'today') loadToday();
     if (tab === 'tomorrow') loadTomorrow();
-    if (tab === 'manual') loadManualJobList();
+    if (tab === 'manual') { loadManualUnitOptions(); loadManualJobList(); }
     if (tab === 'summary') loadSummary();
     if (tab === 'status') loadJobStatus();
 }
@@ -152,6 +161,44 @@ async function markActual(trackingId, type) {
     loadToday();
 }
 
+function switchTodaySub(sub) {
+    document.getElementById('todayJobView').style.display = sub === 'job' ? 'block' : 'none';
+    document.getElementById('todayInspView').style.display = sub === 'inspection' ? 'block' : 'none';
+    document.getElementById('todaySubJobBtn').className = 'pr-btn ' + (sub === 'job' ? 'pr-btn-primary' : 'pr-btn-outline');
+    document.getElementById('todaySubInspBtn').className = 'pr-btn ' + (sub === 'inspection' ? 'pr-btn-primary' : 'pr-btn-outline');
+    if (sub === 'inspection') loadTodayInspection();
+}
+
+async function loadTodayInspection() {
+    const container = document.getElementById('todayInspList');
+    container.innerHTML = '<p class="pr-empty">Loading...</p>';
+    const today = todayStr(0);
+
+    const { data: fabRows } = await supabaseClient
+        .from('pr_fab_tracking')
+        .select('id, actual_end, inspection_status, job_id, pr_jobs(job_no, company_id, pr_units(unit_name)), pr_fab_steps_master(step_name)')
+        .eq('actual_end', today);
+
+    const relevant = (fabRows || []).filter(r => r.pr_jobs && r.pr_jobs.company_id === session.companyId);
+
+    if (relevant.length === 0) {
+        container.innerHTML = '<p class="pr-empty">No steps completed today needing inspection.</p>';
+        return;
+    }
+
+    let html = '';
+    relevant.forEach(r => {
+        const isDone = r.inspection_status === 'Accept';
+        const bgColor = isDone ? '#d4edda' : '#f8d7da';
+        html += '<div class="pr-card" style="background:' + bgColor + ';">';
+        html += '<div class="pr-card-title">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + (r.pr_jobs && r.pr_jobs.pr_units ? ' [' + r.pr_jobs.pr_units.unit_name + ']' : '') + '</div>';
+        html += '<div class="pr-card-sub">' + (r.pr_fab_steps_master ? r.pr_fab_steps_master.step_name : '') + '</div>';
+        html += '<span class="pr-badge pr-badge-' + (isDone ? 'accept' : 'pending') + '">' + r.inspection_status + '</span>';
+        html += '</div>';
+    });
+    container.innerHTML = html;
+}
+
 // ============ TOMORROW TAB ============
 async function loadTomorrow() {
     const container = document.getElementById('tomorrowList');
@@ -182,19 +229,34 @@ async function loadTomorrow() {
 }
 
 // ============ MANUAL ASSIGNMENT TAB ============
+async function loadManualUnitOptions() {
+    const { data } = await supabaseClient.from('pr_units').select('id, unit_name').eq('company_id', session.companyId).eq('is_active', true);
+    const sel = document.getElementById('manualUnitFilter');
+    sel.innerHTML = '<option value="all">All Units</option>';
+    (data || []).forEach(u => {
+        const opt = document.createElement('option');
+        opt.value = u.id;
+        opt.textContent = u.unit_name;
+        sel.appendChild(opt);
+    });
+}
+
 async function loadManualJobList() {
-    const { data } = await supabaseClient
+    const unitFilter = document.getElementById('manualUnitFilter').value;
+    let query = supabaseClient
         .from('pr_jobs')
-        .select('id, job_no')
-        .eq('company_id', session.companyId)
-        .order('created_at', { ascending: false });
+        .select('id, job_no, unit_id, pr_units(unit_name)')
+        .eq('company_id', session.companyId);
+    if (unitFilter && unitFilter !== 'all') query = query.eq('unit_id', unitFilter);
+
+    const { data } = await query.order('created_at', { ascending: false });
 
     const sel = document.getElementById('manualJobSelect');
     sel.innerHTML = '<option value="">-- Select Job --</option>';
     (data || []).forEach(j => {
         const opt = document.createElement('option');
         opt.value = j.id;
-        opt.textContent = j.job_no;
+        opt.textContent = j.job_no + (j.pr_units ? ' [' + j.pr_units.unit_name + ']' : '');
         sel.appendChild(opt);
     });
 }
@@ -279,14 +341,21 @@ async function loadJobStatus() {
     }
 
     let html = '<table class="pr-table"><tr><th>Job No</th><th>Customer</th><th>Unit</th><th>Status</th></tr>';
-    data.forEach(j => {
+    for (const j of data) {
+        let statusDisplay = j.status;
+        if (j.status === 'Running') {
+            const { data: fabData } = await supabaseClient.from('pr_fab_tracking').select('actual_end').eq('job_id', j.id);
+            const total = (fabData || []).length;
+            const done = (fabData || []).filter(f => f.actual_end).length;
+            statusDisplay = j.status + ' (' + done + '/' + total + ')';
+        }
         html += '<tr style="cursor:pointer;" onclick="window.location.href=\'job-detail.html?job=' + j.id + '\'">';
         html += '<td>' + j.job_no + '</td>';
         html += '<td>' + (j.customer_name || '-') + '</td>';
         html += '<td>' + (j.pr_units ? j.pr_units.unit_name : '-') + '</td>';
-        html += '<td><span class="pr-badge pr-badge-' + (j.status === 'Completed' ? 'completed' : 'running') + '">' + j.status + '</span></td>';
+        html += '<td><span class="pr-badge pr-badge-' + (j.status === 'Completed' ? 'completed' : 'running') + '">' + statusDisplay + '</span></td>';
         html += '</tr>';
-    });
+    }
     html += '</table>';
     container.innerHTML = html;
 }
