@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Production Tracker - New Job</title>
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div class="pr-header">
+    <h1>New Job</h1>
+    <button class="logout-btn" style="background:#555;" onclick="window.location.href='home.html'">Back</button>
+</div>
+
+<div class="pr-container">
+
+    <label class="pr-label">Job No.</label>
+    <input type="text" id="jobNoInput" class="pr-input" placeholder="e.g. MK/WO/002/2026">
+
+    <label class="pr-label">Customer Name</label>
+    <input type="text" id="customerInput" class="pr-input" placeholder="Customer name">
+
+    <label class="pr-label">Unit</label>
+    <select id="unitSelect" class="pr-select">
+        <option value="">-- Select Unit --</option>
+    </select>
+
+    <label class="pr-label">Description / Qty</label>
+    <textarea id="descInput" class="pr-input" rows="3" placeholder="Job description or quantity"></textarea>
+
+    <button class="pr-btn pr-btn-primary" style="width:100%; padding:12px; font-size:15px; margin-top:10px;" onclick="createJob()">Create Job</button>
+
+    <p id="errorMsg" style="color:#d9534f; font-size:13px; text-align:center; margin-top:12px; display:none;"></p>
+    <p id="successMsg" style="color:#2e7d32; font-size:13px; text-align:center; margin-top:12px; display:none;"></p>
+
+</div>
+
+<script src="config.js"></script>
+<script>
+
+const session = requireLogin();
+
+async function loadUnits() {
+    const { data } = await supabaseClient.from('pr_units').select('id, unit_name').eq('company_id', session.companyId).eq('is_active', true);
+    const sel = document.getElementById('unitSelect');
+    (data || []).forEach(u => {
+        const opt = document.createElement('option');
+        opt.value = u.id;
+        opt.textContent = u.unit_name;
+        sel.appendChild(opt);
+    });
+}
+
+async function createJob() {
+    const errorMsg = document.getElementById('errorMsg');
+    const successMsg = document.getElementById('successMsg');
+    errorMsg.style.display = 'none';
+    successMsg.style.display = 'none';
+
+    const jobNo = document.getElementById('jobNoInput').value.trim();
+    const customer = document.getElementById('customerInput').value.trim();
+    const unitId = document.getElementById('unitSelect').value;
+    const desc = document.getElementById('descInput').value.trim();
+
+    if (!jobNo) {
+        errorMsg.textContent = 'Job No. is required';
+        errorMsg.style.display = 'block';
+        return;
+    }
+
+    // 1. Create the job
+    const { data: jobData, error: jobError } = await supabaseClient
+        .from('pr_jobs')
+        .insert({
+            company_id: session.companyId,
+            job_no: jobNo,
+            customer_name: customer || null,
+            unit_id: unitId || null,
+            description: desc || null,
+            status: 'Running'
+        })
+        .select('id')
+        .single();
+
+    if (jobError || !jobData) {
+        errorMsg.textContent = 'Error creating job: ' + (jobError ? jobError.message : 'unknown');
+        errorMsg.style.display = 'block';
+        return;
+    }
+
+    const jobId = jobData.id;
+
+    // 2. Create blank Fab tracking rows for every Fab step in this company's master
+    const { data: fabSteps } = await supabaseClient
+        .from('pr_fab_steps_master')
+        .select('id')
+        .eq('company_id', session.companyId)
+        .eq('is_active', true);
+
+    if (fabSteps && fabSteps.length > 0) {
+        const fabRows = fabSteps.map(s => ({
+            job_id: jobId,
+            fab_step_id: s.id,
+            inspection_status: 'Pending'
+        }));
+        await supabaseClient.from('pr_fab_tracking').insert(fabRows);
+    }
+
+    // 3. Create blank Paint tracking rows for every process, under every paint item
+    const { data: paintProcesses } = await supabaseClient
+        .from('pr_paint_process_master')
+        .select('id, paint_item_id')
+        .eq('company_id', session.companyId)
+        .eq('is_active', true);
+
+    if (paintProcesses && paintProcesses.length > 0) {
+        const paintRows = paintProcesses.map(p => ({
+            job_id: jobId,
+            paint_item_id: p.paint_item_id,
+            process_id: p.id
+        }));
+        await supabaseClient.from('pr_paint_tracking').insert(paintRows);
+    }
+
+    successMsg.textContent = 'Job created! Redirecting...';
+    successMsg.style.display = 'block';
+
+    setTimeout(() => {
+        window.location.href = 'job-detail.html?job=' + jobId;
+    }, 1200);
+}
+
+if (session) loadUnits();
+
+</script>
+
+</body>
+</html>
