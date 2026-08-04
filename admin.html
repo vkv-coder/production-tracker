@@ -120,7 +120,8 @@ function switchTab(tab) {
 async function loadFabSteps() {
     const container = document.getElementById('fabStepsList');
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
-    const { data } = await supabaseClient.from('pr_fab_steps_master').select('*').eq('company_id', session.companyId).order('step_order');
+    const { data, error } = await supabaseClient.from('pr_fab_steps_master').select('*').eq('company_id', session.companyId).order('step_order');
+    if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
     let html = '<table class="pr-table"><tr><th>#</th><th>Step Name</th><th>Status</th><th></th></tr>';
     (data || []).forEach(s => {
@@ -147,7 +148,8 @@ async function addFabStep() {
 async function loadPaintItems() {
     const container = document.getElementById('paintItemsList');
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
-    const { data } = await supabaseClient.from('pr_paint_items_master').select('*').eq('company_id', session.companyId).order('item_name');
+    const { data, error } = await supabaseClient.from('pr_paint_items_master').select('*').eq('company_id', session.companyId).order('item_name');
+    if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
     let html = '<table class="pr-table"><tr><th>Item Name</th><th>Status</th><th></th></tr>';
     (data || []).forEach(i => {
@@ -186,7 +188,8 @@ async function loadPaintProcesses() {
     if (!itemId) { container.innerHTML = ''; return; }
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
 
-    const { data } = await supabaseClient.from('pr_paint_process_master').select('*').eq('paint_item_id', itemId).order('process_order');
+    const { data, error } = await supabaseClient.from('pr_paint_process_master').select('*').eq('paint_item_id', itemId).order('process_order');
+    if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
     let html = '<table class="pr-table"><tr><th>#</th><th>Process Name</th><th>Status</th><th></th></tr>';
     (data || []).forEach(p => {
@@ -214,7 +217,8 @@ async function addPaintProcess() {
 async function loadUnits() {
     const container = document.getElementById('unitsList');
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
-    const { data } = await supabaseClient.from('pr_units').select('*').eq('company_id', session.companyId).order('unit_name');
+    const { data, error } = await supabaseClient.from('pr_units').select('*').eq('company_id', session.companyId).order('unit_name');
+    if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
     let html = '<table class="pr-table"><tr><th>Unit Name</th><th>Status</th><th></th></tr>';
     (data || []).forEach(u => {
@@ -239,7 +243,8 @@ async function addUnit() {
 async function loadInspectors() {
     const container = document.getElementById('inspectorsList');
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
-    const { data } = await supabaseClient.from('pr_inspectors').select('*').eq('company_id', session.companyId).order('inspector_name');
+    const { data, error } = await supabaseClient.from('pr_inspectors').select('*').eq('company_id', session.companyId).order('inspector_name');
+    if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
     let html = '<table class="pr-table"><tr><th>Name</th><th>Status</th><th></th></tr>';
     (data || []).forEach(i => {
@@ -264,7 +269,8 @@ async function addInspector() {
 async function loadWorkersMaster() {
     const container = document.getElementById('workersMasterList');
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
-    const { data } = await supabaseClient.from('pr_workers').select('*').eq('company_id', session.companyId).order('worker_name');
+    const { data, error } = await supabaseClient.from('pr_workers').select('*').eq('company_id', session.companyId).order('worker_name');
+    if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
     let html = '<table class="pr-table"><tr><th>Name</th><th>Status</th><th></th></tr>';
     (data || []).forEach(w => {
@@ -289,7 +295,8 @@ async function addWorker() {
 async function loadJobsAdmin() {
     const container = document.getElementById('jobsList');
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
-    const { data } = await supabaseClient.from('pr_jobs').select('*, pr_units(unit_name)').eq('company_id', session.companyId).order('created_at', { ascending: false });
+    const { data, error } = await supabaseClient.from('pr_jobs').select('*, pr_units(unit_name)').eq('company_id', session.companyId).order('created_at', { ascending: false });
+    if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
     if (!data || data.length === 0) { container.innerHTML = '<p class="pr-empty">No jobs found.</p>'; return; }
 
