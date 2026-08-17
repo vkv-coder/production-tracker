@@ -87,7 +87,7 @@ async function loadFabTable() {
 
     const { data } = await supabaseClient
         .from('pr_fab_tracking')
-        .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, inspection_date, inspector_id, remarks, pr_fab_steps_master(step_name, step_order)')
+        .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, inspection_date, remarks, pr_fab_steps_master(step_name, step_order)')
         .eq('job_id', jobId);
 
     if (!data || data.length === 0) {
@@ -109,12 +109,19 @@ async function loadFabTable() {
         assignedMap[a.fab_tracking_id].add(a.worker_id);
     });
 
+    const { data: inspAssignments } = await supabaseClient
+        .from('pr_fab_tracking_inspectors')
+        .select('fab_tracking_id, inspector_id')
+        .in('fab_tracking_id', trackingIds);
+
+    const assignedInspMap = {};
+    (inspAssignments || []).forEach(a => {
+        if (!assignedInspMap[a.fab_tracking_id]) assignedInspMap[a.fab_tracking_id] = new Set();
+        assignedInspMap[a.fab_tracking_id].add(a.inspector_id);
+    });
+
     let html = '';
     data.forEach(r => {
-        const inspOptions = inspectorsList.map(i =>
-            '<option value="' + i.id + '"' + (r.inspector_id === i.id ? ' selected' : '') + '>' + i.inspector_name + '</option>'
-        ).join('');
-
         html += '<div class="pr-card">';
         html += '<div class="pr-card-title">' + (r.pr_fab_steps_master?.step_order || '') + '. ' + (r.pr_fab_steps_master?.step_name || '') + '</div>';
 
@@ -135,8 +142,19 @@ async function loadFabTable() {
         html += '<label class="pr-label">Inspection Date</label>';
         html += '<input type="date" class="pr-input" value="' + (r.inspection_date || '') + '" onchange="updateFabField(\'' + r.id + '\',\'inspection_date\',this.value)">';
 
-        html += '<label class="pr-label">Inspector</label>';
-        html += '<select class="pr-select" onchange="updateFabField(\'' + r.id + '\',\'inspector_id\',this.value)"><option value="">-- Select --</option>' + inspOptions + '</select>';
+        const assignedInspSet = assignedInspMap[r.id] || new Set();
+        html += '<label class="pr-label">Inspectors</label>';
+        html += '<div class="pr-worker-checklist">';
+        if (inspectorsList.length === 0) {
+            html += '<p class="pr-empty" style="margin:4px 0;">No inspectors added yet.</p>';
+        }
+        inspectorsList.forEach(i => {
+            const checked = assignedInspSet.has(i.id) ? 'checked' : '';
+            html += '<label style="display:flex; align-items:center; gap:6px; font-size:13px; margin:4px 0;">';
+            html += '<input type="checkbox" ' + checked + ' onchange="toggleFabInspector(\'' + r.id + '\',\'' + i.id + '\',this.checked)"> ' + escapeHtml(i.inspector_name);
+            html += '</label>';
+        });
+        html += '</div>';
 
         const assignedSet = assignedMap[r.id] || new Set();
         html += '<label class="pr-label">Workers</label>';
@@ -175,6 +193,16 @@ async function toggleFabWorker(trackingId, workerId, checked) {
     } else {
         const { error } = await supabaseClient.from('pr_fab_tracking_workers').delete().eq('fab_tracking_id', trackingId).eq('worker_id', workerId);
         if (error) alert('Error removing worker: ' + error.message);
+    }
+}
+
+async function toggleFabInspector(trackingId, inspectorId, checked) {
+    if (checked) {
+        const { error } = await supabaseClient.from('pr_fab_tracking_inspectors').insert({ fab_tracking_id: trackingId, inspector_id: inspectorId });
+        if (error) alert('Error assigning inspector: ' + error.message);
+    } else {
+        const { error } = await supabaseClient.from('pr_fab_tracking_inspectors').delete().eq('fab_tracking_id', trackingId).eq('inspector_id', inspectorId);
+        if (error) alert('Error removing inspector: ' + error.message);
     }
 }
 
