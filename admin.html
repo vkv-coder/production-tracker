@@ -81,6 +81,7 @@
         <div class="pr-card">
             <label class="pr-label">Add Worker</label>
             <input type="text" id="newWorkerName" class="pr-input" placeholder="Worker name">
+            <input type="text" id="newWorkerCategory" class="pr-input" placeholder="Category (e.g. Welder, Plasma Operator)">
             <button class="pr-btn pr-btn-primary" onclick="addWorker()">Add Worker</button>
         </div>
         <div id="workersMasterList"><p class="pr-empty">Loading...</p></div>
@@ -272,11 +273,16 @@ async function loadWorkersMaster() {
     const { data, error } = await supabaseClient.from('pr_workers').select('*').eq('company_id', session.companyId).order('worker_name');
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
-    let html = '<table class="pr-table"><tr><th>Name</th><th>Status</th><th></th></tr>';
+    let html = '<table class="pr-table"><tr><th>Name</th><th>Category</th><th>Status</th><th></th></tr>';
     (data || []).forEach(w => {
-        html += '<tr><td>' + w.worker_name + '</td>';
+        const jsName = w.worker_name.replace(/'/g, "\\'");
+        html += '<tr><td>' + escapeHtml(w.worker_name) + '</td>';
+        html += '<td>' + escapeHtml(w.category || '-') + '</td>';
         html += '<td><span class="pr-badge pr-badge-' + (w.is_active ? 'accept' : 'reject') + '">' + (w.is_active ? 'Active' : 'Inactive') + '</span></td>';
-        html += '<td><button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_workers\',\'' + w.id + '\',' + w.is_active + ',loadWorkersMaster)">' + (w.is_active ? 'Deactivate' : 'Activate') + '</button></td></tr>';
+        html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
+        html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_workers\',\'' + w.id + '\',' + w.is_active + ',loadWorkersMaster)">' + (w.is_active ? 'Deactivate' : 'Activate') + '</button>';
+        html += '<button class="pr-btn pr-btn-danger" onclick="deleteWorker(\'' + w.id + '\',\'' + jsName + '\')">Delete</button>';
+        html += '</td></tr>';
     });
     html += '</table>';
     container.innerHTML = html;
@@ -284,10 +290,19 @@ async function loadWorkersMaster() {
 
 async function addWorker() {
     const name = document.getElementById('newWorkerName').value.trim();
+    const category = document.getElementById('newWorkerCategory').value.trim();
     if (!name) { alert('Enter worker name'); return; }
-    const { error } = await supabaseClient.from('pr_workers').insert({ company_id: session.companyId, worker_name: name });
+    const { error } = await supabaseClient.from('pr_workers').insert({ company_id: session.companyId, worker_name: name, category: category || null });
     if (error) { alert('Error: ' + error.message); return; }
     document.getElementById('newWorkerName').value = '';
+    document.getElementById('newWorkerCategory').value = '';
+    loadWorkersMaster();
+}
+
+async function deleteWorker(workerId, workerName) {
+    if (!confirm('Delete worker ' + workerName + ' permanently? Past job records will keep their data but lose the link to this worker. This cannot be undone.')) return;
+    const { error } = await supabaseClient.from('pr_workers').delete().eq('id', workerId);
+    if (error) { alert('Error deleting: ' + error.message); return; }
     loadWorkersMaster();
 }
 
@@ -333,6 +348,11 @@ async function deleteJob(jobId, jobNo) {
     const { error } = await supabaseClient.from('pr_jobs').delete().eq('id', jobId);
     if (error) { alert('Error deleting: ' + error.message); return; }
     loadJobsAdmin();
+}
+
+// ============ SHARED HELPERS ============
+function escapeHtml(str) {
+    return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // ============ SHARED TOGGLE ============

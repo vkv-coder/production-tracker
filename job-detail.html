@@ -63,7 +63,7 @@ async function init() {
     const { data: insp } = await supabaseClient.from('pr_inspectors').select('id, inspector_name').eq('company_id', session.companyId).eq('is_active', true);
     inspectorsList = insp || [];
 
-    const { data: wrk } = await supabaseClient.from('pr_workers').select('id, worker_name').eq('company_id', session.companyId).eq('is_active', true);
+    const { data: wrk } = await supabaseClient.from('pr_workers').select('id, worker_name, category').eq('company_id', session.companyId).eq('is_active', true);
     workersList = wrk || [];
 
     const { data: items } = await supabaseClient.from('pr_paint_items_master').select('id, item_name').eq('company_id', session.companyId).eq('is_active', true);
@@ -87,7 +87,7 @@ async function loadFabTable() {
 
     const { data } = await supabaseClient
         .from('pr_fab_tracking')
-        .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, inspector_id, worker_id, remarks, pr_fab_steps_master(step_name, step_order)')
+        .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, inspector_id, remarks, pr_fab_steps_master(step_name, step_order)')
         .eq('job_id', jobId);
 
     if (!data || data.length === 0) {
@@ -96,6 +96,18 @@ async function loadFabTable() {
     }
 
     data.sort((a, b) => (a.pr_fab_steps_master?.step_order || 0) - (b.pr_fab_steps_master?.step_order || 0));
+
+    const trackingIds = data.map(r => r.id);
+    const { data: assignments } = await supabaseClient
+        .from('pr_fab_tracking_workers')
+        .select('fab_tracking_id, worker_id')
+        .in('fab_tracking_id', trackingIds);
+
+    const assignedMap = {};
+    (assignments || []).forEach(a => {
+        if (!assignedMap[a.fab_tracking_id]) assignedMap[a.fab_tracking_id] = new Set();
+        assignedMap[a.fab_tracking_id].add(a.worker_id);
+    });
 
     let html = '';
     data.forEach(r => {
@@ -123,11 +135,20 @@ async function loadFabTable() {
         html += '<label class="pr-label">Inspector</label>';
         html += '<select class="pr-select" onchange="updateFabField(\'' + r.id + '\',\'inspector_id\',this.value)"><option value="">-- Select --</option>' + inspOptions + '</select>';
 
-        const workerOptions = workersList.map(w =>
-            '<option value="' + w.id + '"' + (r.worker_id === w.id ? ' selected' : '') + '>' + w.worker_name + '</option>'
-        ).join('');
-        html += '<label class="pr-label">Worker</label>';
-        html += '<select class="pr-select" onchange="updateFabField(\'' + r.id + '\',\'worker_id\',this.value)"><option value="">-- Select --</option>' + workerOptions + '</select>';
+        const assignedSet = assignedMap[r.id] || new Set();
+        html += '<label class="pr-label">Workers</label>';
+        html += '<div class="pr-worker-checklist">';
+        if (workersList.length === 0) {
+            html += '<p class="pr-empty" style="margin:4px 0;">No workers added yet.</p>';
+        }
+        workersList.forEach(w => {
+            const checked = assignedSet.has(w.id) ? 'checked' : '';
+            const label = escapeHtml(w.worker_name) + (w.category ? ' (' + escapeHtml(w.category) + ')' : '');
+            html += '<label style="display:flex; align-items:center; gap:6px; font-size:13px; margin:4px 0;">';
+            html += '<input type="checkbox" ' + checked + ' onchange="toggleFabWorker(\'' + r.id + '\',\'' + w.id + '\',this.checked)"> ' + label;
+            html += '</label>';
+        });
+        html += '</div>';
 
         html += '<label class="pr-label">Remarks</label>';
         html += '<input type="text" class="pr-input" value="' + (r.remarks || '').replace(/"/g, '&quot;') + '" onchange="updateFabField(\'' + r.id + '\',\'remarks\',this.value)">';
@@ -142,6 +163,20 @@ async function updateFabField(trackingId, field, value) {
     updateObj[field] = value === '' ? null : value;
     const { error } = await supabaseClient.from('pr_fab_tracking').update(updateObj).eq('id', trackingId);
     if (error) alert('Error saving: ' + error.message);
+}
+
+async function toggleFabWorker(trackingId, workerId, checked) {
+    if (checked) {
+        const { error } = await supabaseClient.from('pr_fab_tracking_workers').insert({ fab_tracking_id: trackingId, worker_id: workerId });
+        if (error) alert('Error assigning worker: ' + error.message);
+    } else {
+        const { error } = await supabaseClient.from('pr_fab_tracking_workers').delete().eq('fab_tracking_id', trackingId).eq('worker_id', workerId);
+        if (error) alert('Error removing worker: ' + error.message);
+    }
+}
+
+function escapeHtml(str) {
+    return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // ============ PAINTING ============

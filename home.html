@@ -409,7 +409,7 @@ async function loadWorkerBoard() {
 
     const { data: workers } = await supabaseClient
         .from('pr_workers')
-        .select('id, worker_name')
+        .select('id, worker_name, category')
         .eq('company_id', session.companyId)
         .eq('is_active', true)
         .order('worker_name');
@@ -419,20 +419,18 @@ async function loadWorkerBoard() {
         return;
     }
 
-    // Find all ongoing steps (started but not finished) with a worker assigned
-    const { data: ongoing } = await supabaseClient
-        .from('pr_fab_tracking')
-        .select('worker_id, job_id, pr_jobs(job_no, company_id), pr_fab_steps_master(step_name)')
-        .not('actual_start', 'is', null)
-        .is('actual_end', null)
-        .not('worker_id', 'is', null);
+    // Find all workers assigned to an ongoing step (started but not finished)
+    const { data: assignments } = await supabaseClient
+        .from('pr_fab_tracking_workers')
+        .select('worker_id, pr_fab_tracking(actual_start, actual_end, pr_jobs(job_no, company_id), pr_fab_steps_master(step_name))');
 
     const busyMap = {};
-    (ongoing || []).forEach(o => {
-        if (o.pr_jobs && o.pr_jobs.company_id === session.companyId) {
-            busyMap[o.worker_id] = {
-                job_no: o.pr_jobs.job_no,
-                step_name: o.pr_fab_steps_master ? o.pr_fab_steps_master.step_name : ''
+    (assignments || []).forEach(a => {
+        const t = a.pr_fab_tracking;
+        if (t && t.actual_start && !t.actual_end && t.pr_jobs && t.pr_jobs.company_id === session.companyId) {
+            busyMap[a.worker_id] = {
+                job_no: t.pr_jobs.job_no,
+                step_name: t.pr_fab_steps_master ? t.pr_fab_steps_master.step_name : ''
             };
         }
     });
@@ -441,9 +439,9 @@ async function loadWorkerBoard() {
     workers.forEach(w => {
         const busy = busyMap[w.id];
         html += '<div class="pr-card" style="' + (busy ? 'background:#f8d7da;' : 'background:#d4edda;') + '">';
-        html += '<div class="pr-card-title">' + w.worker_name + '</div>';
+        html += '<div class="pr-card-title">' + escapeHtml(w.worker_name) + (w.category ? ' <span style="font-weight:normal; font-size:12px; color:#555;">(' + escapeHtml(w.category) + ')</span>' : '') + '</div>';
         if (busy) {
-            html += '<div class="pr-card-sub">Busy: ' + busy.job_no + ' - ' + busy.step_name + '</div>';
+            html += '<div class="pr-card-sub">Busy: ' + escapeHtml(busy.job_no) + ' - ' + escapeHtml(busy.step_name) + '</div>';
             html += '<span class="pr-btn pr-btn-danger" style="cursor:default;">BUSY</span>';
         } else {
             html += '<span class="pr-btn pr-btn-success" style="cursor:default;">FREE</span>';
@@ -451,6 +449,10 @@ async function loadWorkerBoard() {
         html += '</div>';
     });
     container.innerHTML = html;
+}
+
+function escapeHtml(str) {
+    return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // Initial load
