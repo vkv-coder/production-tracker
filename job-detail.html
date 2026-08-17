@@ -87,7 +87,7 @@ async function loadFabTable() {
 
     const { data } = await supabaseClient
         .from('pr_fab_tracking')
-        .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, inspector_id, remarks, pr_fab_steps_master(step_name, step_order)')
+        .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, inspection_date, inspector_id, remarks, pr_fab_steps_master(step_name, step_order)')
         .eq('job_id', jobId);
 
     if (!data || data.length === 0) {
@@ -131,6 +131,9 @@ async function loadFabTable() {
             html += '<option value="' + s + '"' + (r.inspection_status === s ? ' selected' : '') + '>' + s + '</option>';
         });
         html += '</select>';
+
+        html += '<label class="pr-label">Inspection Date</label>';
+        html += '<input type="date" class="pr-input" value="' + (r.inspection_date || '') + '" onchange="updateFabField(\'' + r.id + '\',\'inspection_date\',this.value)">';
 
         html += '<label class="pr-label">Inspector</label>';
         html += '<select class="pr-select" onchange="updateFabField(\'' + r.id + '\',\'inspector_id\',this.value)"><option value="">-- Select --</option>' + inspOptions + '</select>';
