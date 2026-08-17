@@ -130,7 +130,7 @@ async function loadToday() {
 
     const { data: fabRows } = await supabaseClient
         .from('pr_fab_tracking')
-        .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, job_id, pr_jobs(job_no, company_id, pr_units(unit_name)), pr_fab_steps_master(step_name)')
+        .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, job_id, pr_jobs(job_no, company_id, pr_units(unit_name)), pr_fab_steps_master(step_name, step_order)')
         .or('inspection_status.neq.Accept,actual_end.is.null');
 
     const relevant = (fabRows || []).filter(r => {
@@ -159,10 +159,10 @@ async function loadToday() {
         const isOverdue = (r.planned_start && r.planned_start < today && !r.actual_start) || (r.planned_end && r.planned_end < today && !r.actual_end);
         html += '<div class="pr-card" style="' + (isOverdue ? 'background:#f8d7da; border:1px solid #d9534f;' : '') + '">';
         html += '<div class="pr-card-title">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + (r.pr_jobs && r.pr_jobs.pr_units ? ' [' + r.pr_jobs.pr_units.unit_name + ']' : '') + '</div>';
-        html += '<div class="pr-card-sub">' + (r.pr_fab_steps_master ? r.pr_fab_steps_master.step_name : '') + '</div>';
+        html += '<div class="pr-card-sub">' + (r.pr_fab_steps_master ? (r.pr_fab_steps_master.step_order != null ? r.pr_fab_steps_master.step_order + '. ' : '') + r.pr_fab_steps_master.step_name : '') + '</div>';
         html += '<div style="font-size:12px; color:' + (isOverdue ? '#a00' : '#666') + ';">Planned: ' + (r.planned_start || '-') + ' to ' + (r.planned_end || '-') + (isOverdue ? ' &mdash; OVERDUE' : '') + '</div>';
         html += '<div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">';
-        if (!r.actual_start) {
+        if (!r.actual_start && !r.actual_end) {
             html += '<button class="pr-btn pr-btn-success" onclick="markActual(\'' + r.id + '\',\'start\')">Start</button>';
         }
         if (r.actual_start && !r.actual_end) {
