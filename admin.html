@@ -138,6 +138,20 @@ async function addFabStep() {
     const name = document.getElementById('newFabStepName').value.trim();
     const order = parseInt(document.getElementById('newFabStepOrder').value);
     if (!name || !order) { alert('Enter step name and order number'); return; }
+
+    // Shift every existing step at/after this position up by 1, highest first, so inserting mid-sequence doesn't collide
+    const { data: toShift } = await supabaseClient
+        .from('pr_fab_steps_master')
+        .select('id, step_order')
+        .eq('company_id', session.companyId)
+        .gte('step_order', order)
+        .order('step_order', { ascending: false });
+
+    for (const s of (toShift || [])) {
+        const { error: shiftError } = await supabaseClient.from('pr_fab_steps_master').update({ step_order: s.step_order + 1 }).eq('id', s.id);
+        if (shiftError) { alert('Error renumbering existing steps: ' + shiftError.message); return; }
+    }
+
     const { error } = await supabaseClient.from('pr_fab_steps_master').insert({ company_id: session.companyId, step_name: name, step_order: order });
     if (error) { alert('Error: ' + error.message); return; }
     document.getElementById('newFabStepName').value = '';
@@ -207,6 +221,20 @@ async function addPaintProcess() {
     const name = document.getElementById('newPaintProcessName').value.trim();
     const order = parseInt(document.getElementById('newPaintProcessOrder').value);
     if (!itemId || !name || !order) { alert('Select item, enter process name and order'); return; }
+
+    // Shift every existing process at/after this position up by 1, highest first, so inserting mid-sequence doesn't collide
+    const { data: toShift } = await supabaseClient
+        .from('pr_paint_process_master')
+        .select('id, process_order')
+        .eq('paint_item_id', itemId)
+        .gte('process_order', order)
+        .order('process_order', { ascending: false });
+
+    for (const p of (toShift || [])) {
+        const { error: shiftError } = await supabaseClient.from('pr_paint_process_master').update({ process_order: p.process_order + 1 }).eq('id', p.id);
+        if (shiftError) { alert('Error renumbering existing processes: ' + shiftError.message); return; }
+    }
+
     const { error } = await supabaseClient.from('pr_paint_process_master').insert({ company_id: session.companyId, paint_item_id: itemId, process_name: name, process_order: order });
     if (error) { alert('Error: ' + error.message); return; }
     document.getElementById('newPaintProcessName').value = '';
