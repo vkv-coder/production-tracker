@@ -22,6 +22,7 @@
 <div class="pr-tabs">
     <div class="pr-tab active" data-tab="today" onclick="switchTab('today')">Today</div>
     <div class="pr-tab" data-tab="tomorrow" onclick="switchTab('tomorrow')">Tomorrow</div>
+    <div class="pr-tab" data-tab="week" onclick="switchTab('week')">This Week</div>
     <div class="pr-tab" data-tab="manual" onclick="switchTab('manual')">Manual</div>
     <div class="pr-tab" data-tab="summary" onclick="switchTab('summary')">Summary</div>
     <div class="pr-tab" data-tab="status" onclick="switchTab('status')">Job Status</div>
@@ -42,6 +43,14 @@
     <!-- TOMORROW TAB -->
     <div id="tab-tomorrow" class="tab-content" style="display:none;">
         <div id="tomorrowList"><p class="pr-empty">Loading...</p></div>
+    </div>
+
+    <!-- THIS WEEK TAB -->
+    <div id="tab-week" class="tab-content" style="display:none;">
+        <h3 style="margin:8px 0; font-size:14px; color:#a00;">Delayed / Running Late</h3>
+        <div id="weekDelayedList"><p class="pr-empty">Loading...</p></div>
+        <h3 style="margin:16px 0 8px; font-size:14px; color:#1e3a5f;">This Week's Schedule (Today + 6 days)</h3>
+        <div id="weekScheduleList"><p class="pr-empty">Loading...</p></div>
     </div>
 
     <!-- MANUAL ASSIGNMENT TAB -->
@@ -110,6 +119,7 @@ function switchTab(tab) {
 
     if (tab === 'today') loadToday();
     if (tab === 'tomorrow') loadTomorrow();
+    if (tab === 'week') loadWeek();
     if (tab === 'manual') { loadManualUnitOptions(); loadManualJobList(); }
     if (tab === 'summary') loadSummary();
     if (tab === 'status') loadJobStatus();
@@ -268,6 +278,54 @@ async function loadTomorrow() {
         html += '</div>';
     });
     container.innerHTML = html;
+}
+
+// ============ THIS WEEK TAB ============
+async function loadWeek() {
+    const delayedContainer = document.getElementById('weekDelayedList');
+    const scheduleContainer = document.getElementById('weekScheduleList');
+    delayedContainer.innerHTML = '<p class="pr-empty">Loading...</p>';
+    scheduleContainer.innerHTML = '<p class="pr-empty">Loading...</p>';
+
+    const today = todayStr(0);
+    const weekEnd = todayStr(6);
+
+    const { data: fabRows } = await supabaseClient
+        .from('pr_fab_tracking')
+        .select('id, planned_start, planned_end, actual_start, actual_end, job_id, pr_jobs(job_no, company_id, pr_units(unit_name)), pr_fab_steps_master(step_name, step_order)')
+        .is('actual_end', null);
+
+    const relevant = (fabRows || []).filter(r => r.pr_jobs && r.pr_jobs.company_id === session.companyId);
+
+    const delayed = relevant.filter(r =>
+        (r.planned_start && r.planned_start < today && !r.actual_start) ||
+        (r.planned_end && r.planned_end < today)
+    );
+    const delayedIds = new Set(delayed.map(r => r.id));
+    const scheduled = relevant.filter(r => !delayedIds.has(r.id) && (
+        (r.planned_start && r.planned_start >= today && r.planned_start <= weekEnd) ||
+        (r.planned_end && r.planned_end >= today && r.planned_end <= weekEnd)
+    ));
+
+    delayed.sort((a, b) => (a.planned_end || a.planned_start || '').localeCompare(b.planned_end || b.planned_start || ''));
+    scheduled.sort((a, b) => (a.planned_start || '').localeCompare(b.planned_start || ''));
+
+    function cardHtml(r, isDelayed) {
+        const refDate = r.planned_end || r.planned_start;
+        const daysLate = isDelayed && refDate ? Math.round((new Date(today) - new Date(refDate)) / 86400000) : null;
+        let html = '<div class="pr-card" style="' + (isDelayed ? 'background:#f8d7da; border:1px solid #d9534f;' : '') + '">';
+        html += '<div class="pr-card-title">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + (r.pr_jobs && r.pr_jobs.pr_units ? ' [' + r.pr_jobs.pr_units.unit_name + ']' : '') + '</div>';
+        html += '<div class="pr-card-sub">' + (r.pr_fab_steps_master ? (r.pr_fab_steps_master.step_order != null ? r.pr_fab_steps_master.step_order + '. ' : '') + r.pr_fab_steps_master.step_name : '') + '</div>';
+        html += '<div style="font-size:12px; color:' + (isDelayed ? '#a00' : '#666') + ';">Planned: ' + (r.planned_start || '-') + ' to ' + (r.planned_end || '-') + (r.actual_start ? ' &middot; Actual Start: ' + r.actual_start : '') + '</div>';
+        if (isDelayed && daysLate != null && daysLate > 0) {
+            html += '<div style="font-size:12px; color:#a00; font-weight:bold;">' + daysLate + ' day(s) overdue</div>';
+        }
+        html += '</div>';
+        return html;
+    }
+
+    delayedContainer.innerHTML = delayed.length ? delayed.map(r => cardHtml(r, true)).join('') : '<p class="pr-empty">No delayed steps.</p>';
+    scheduleContainer.innerHTML = scheduled.length ? scheduled.map(r => cardHtml(r, false)).join('') : '<p class="pr-empty">Nothing else scheduled this week.</p>';
 }
 
 // ============ MANUAL ASSIGNMENT TAB ============
