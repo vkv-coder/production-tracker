@@ -122,14 +122,19 @@ async function loadFabTable() {
 
     let html = '';
     data.forEach(r => {
-        html += '<div class="pr-card">';
-        html += '<div class="pr-card-title">' + (r.pr_fab_steps_master?.step_order || '') + '. ' + (r.pr_fab_steps_master?.step_name || '') + '</div>';
+        const startDelayed = !!(r.actual_start && r.planned_start && r.actual_start > r.planned_start);
+        const endDelayed = !!(r.actual_end && r.planned_end && r.actual_end > r.planned_end);
+        const delayed = startDelayed || endDelayed;
+        const cardStyle = delayed ? ' style="border:2px solid #dc3545; background:#fff5f5;"' : '';
+
+        html += '<div class="pr-card"' + cardStyle + '>';
+        html += '<div class="pr-card-title">' + (r.pr_fab_steps_master?.step_order || '') + '. ' + (r.pr_fab_steps_master?.step_name || '') + (delayed ? ' <span style="color:#dc3545; font-size:12px;">&#9888; Delayed</span>' : '') + '</div>';
 
         html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">';
         html += '<div><label class="pr-label">Planned Start</label><input type="date" class="pr-input" value="' + (r.planned_start || '') + '" onchange="updateFabField(\'' + r.id + '\',\'planned_start\',this.value)"></div>';
         html += '<div><label class="pr-label">Planned End</label><input type="date" class="pr-input" value="' + (r.planned_end || '') + '" onchange="updateFabField(\'' + r.id + '\',\'planned_end\',this.value)"></div>';
-        html += '<div><label class="pr-label">Actual Start</label><input type="date" class="pr-input" value="' + (r.actual_start || '') + '" onchange="updateFabField(\'' + r.id + '\',\'actual_start\',this.value)"></div>';
-        html += '<div><label class="pr-label">Actual End</label><input type="date" class="pr-input" value="' + (r.actual_end || '') + '" onchange="updateFabField(\'' + r.id + '\',\'actual_end\',this.value)"></div>';
+        html += '<div><label class="pr-label"' + (startDelayed ? ' style="color:#dc3545;"' : '') + '>Actual Start</label><input type="date" class="pr-input" style="' + (startDelayed ? 'border:2px solid #dc3545;' : '') + '" value="' + (r.actual_start || '') + '" onchange="updateFabField(\'' + r.id + '\',\'actual_start\',this.value)"></div>';
+        html += '<div><label class="pr-label"' + (endDelayed ? ' style="color:#dc3545;"' : '') + '>Actual End</label><input type="date" class="pr-input" style="' + (endDelayed ? 'border:2px solid #dc3545;' : '') + '" value="' + (r.actual_end || '') + '" onchange="updateFabField(\'' + r.id + '\',\'actual_end\',this.value)"></div>';
         html += '</div>';
 
         html += '<label class="pr-label" style="margin-top:6px;">Inspection</label>';
@@ -171,8 +176,9 @@ async function loadFabTable() {
         });
         html += '</div>';
 
-        html += '<label class="pr-label">Remarks</label>';
-        html += '<input type="text" class="pr-input" value="' + (r.remarks || '').replace(/"/g, '&quot;') + '" onchange="updateFabField(\'' + r.id + '\',\'remarks\',this.value)">';
+        const remarksRequired = delayed && !r.remarks;
+        html += '<label class="pr-label"' + (remarksRequired ? ' style="color:#dc3545;"' : '') + '>Remarks' + (remarksRequired ? ' (required - delayed)' : '') + '</label>';
+        html += '<input type="text" class="pr-input" style="' + (remarksRequired ? 'border:2px solid #dc3545;' : '') + '" placeholder="' + (remarksRequired ? 'Enter reason for delay' : '') + '" value="' + (r.remarks || '').replace(/"/g, '&quot;') + '" onchange="updateFabField(\'' + r.id + '\',\'remarks\',this.value)">';
 
         html += '</div>';
     });
@@ -183,7 +189,18 @@ async function updateFabField(trackingId, field, value) {
     const updateObj = {};
     updateObj[field] = value === '' ? null : value;
     const { error } = await supabaseClient.from('pr_fab_tracking').update(updateObj).eq('id', trackingId);
-    if (error) alert('Error saving: ' + error.message);
+    if (error) { alert('Error saving: ' + error.message); return; }
+    if (field === 'actual_start' || field === 'actual_end' || field === 'planned_start' || field === 'planned_end') {
+        const { data: row } = await supabaseClient.from('pr_fab_tracking').select('planned_start, planned_end, actual_start, actual_end, remarks').eq('id', trackingId).single();
+        if (row) {
+            const startDelayed = !!(row.actual_start && row.planned_start && row.actual_start > row.planned_start);
+            const endDelayed = !!(row.actual_end && row.planned_end && row.actual_end > row.planned_end);
+            if ((startDelayed || endDelayed) && !row.remarks) {
+                alert('This step is delayed vs. plan. Please enter Remarks explaining the delay.');
+            }
+        }
+    }
+    loadFabTable();
 }
 
 async function toggleFabWorker(trackingId, workerId, checked) {

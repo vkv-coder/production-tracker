@@ -326,11 +326,31 @@ async function loadSummary() {
         return;
     }
 
+    function daysBetween(a, b) {
+        if (!a || !b) return null;
+        const ms = new Date(b) - new Date(a);
+        return Math.round(ms / 86400000) + 1;
+    }
+
     let html = '';
     for (const job of jobs) {
-        const { data: fabData } = await supabaseClient.from('pr_fab_tracking').select('actual_end').eq('job_id', job.id);
-        const fabTotal = (fabData || []).length;
-        const fabDone = (fabData || []).filter(f => f.actual_end).length;
+        const { data: fabData } = await supabaseClient.from('pr_fab_tracking').select('planned_start, planned_end, actual_start, actual_end').eq('job_id', job.id);
+        const fabRows = fabData || [];
+        const fabTotal = fabRows.length;
+        const fabDone = fabRows.filter(f => f.actual_end).length;
+
+        const plannedStarts = fabRows.map(r => r.planned_start).filter(Boolean).sort();
+        const plannedEnds = fabRows.map(r => r.planned_end).filter(Boolean).sort();
+        const actualStarts = fabRows.map(r => r.actual_start).filter(Boolean).sort();
+        const actualEnds = fabRows.map(r => r.actual_end).filter(Boolean).sort();
+
+        const plannedFirstStart = plannedStarts[0] || null;
+        const plannedLastEnd = plannedEnds.length ? plannedEnds[plannedEnds.length - 1] : null;
+        const actualFirstStart = actualStarts[0] || null;
+        const actualLastEnd = actualEnds.length ? actualEnds[actualEnds.length - 1] : null;
+
+        const plannedTotalDays = daysBetween(plannedFirstStart, plannedLastEnd);
+        const actualTotalDays = daysBetween(actualFirstStart, actualLastEnd);
 
         const { data: paintData } = await supabaseClient
             .from('pr_paint_tracking')
@@ -361,6 +381,16 @@ async function loadSummary() {
         html += '<div style="font-size:12px; margin-top:6px;">Fabrication: ' + fabDone + '/' + fabTotal + '</div>';
         html += '<div class="pr-progress-bg"><div class="pr-progress-fill" style="width:' + fabPct + '%;"></div></div>';
         html += paintHtml;
+
+        html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 12px; font-size:12px; margin-top:10px; border-top:1px solid #eee; padding-top:8px;">';
+        html += '<div><b>Planned 1st Start:</b> ' + (plannedFirstStart || '-') + '</div>';
+        html += '<div><b>Actual 1st Start:</b> ' + (actualFirstStart || '-') + '</div>';
+        html += '<div><b>Planned Last End:</b> ' + (plannedLastEnd || '-') + '</div>';
+        html += '<div><b>Actual Last End:</b> ' + (actualLastEnd || '-') + '</div>';
+        html += '<div><b>Planned Total Days:</b> ' + (plannedTotalDays != null ? plannedTotalDays : '-') + '</div>';
+        html += '<div><b>Actual Total Days:</b> ' + (actualTotalDays != null ? actualTotalDays : '-') + '</div>';
+        html += '</div>';
+
         html += '</div>';
     }
     container.innerHTML = html;
