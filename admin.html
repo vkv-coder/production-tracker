@@ -126,12 +126,67 @@ async function loadFabSteps() {
 
     let html = '<table class="pr-table"><tr><th>#</th><th>Step Name</th><th>Status</th><th></th></tr>';
     (data || []).forEach(s => {
-        html += '<tr><td>' + s.step_order + '</td><td>' + s.step_name + '</td>';
+        const jsName = s.step_name.replace(/'/g, "\\'");
+        html += '<tr><td>' + s.step_order + '</td><td>' + escapeHtml(s.step_name) + '</td>';
         html += '<td><span class="pr-badge pr-badge-' + (s.is_active ? 'accept' : 'reject') + '">' + (s.is_active ? 'Active' : 'Inactive') + '</span></td>';
-        html += '<td><button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_fab_steps_master\',\'' + s.id + '\',' + s.is_active + ',loadFabSteps)">' + (s.is_active ? 'Deactivate' : 'Activate') + '</button></td></tr>';
+        html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
+        html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_fab_steps_master\',\'' + s.id + '\',' + s.is_active + ',loadFabSteps)">' + (s.is_active ? 'Deactivate' : 'Activate') + '</button>';
+        html += '<button class="pr-btn pr-btn-outline" onclick="editFabStep(\'' + s.id + '\',\'' + jsName + '\',' + s.step_order + ')">Edit</button>';
+        html += '<button class="pr-btn pr-btn-danger" onclick="deleteFabStep(\'' + s.id + '\',\'' + jsName + '\')">Delete</button>';
+        html += '</td></tr>';
     });
     html += '</table>';
     container.innerHTML = html;
+}
+
+async function editFabStep(id, currentName, currentOrder) {
+    const newName = prompt('Step name:', currentName);
+    if (newName === null) return;
+    const newOrderStr = prompt('Order number:', currentOrder);
+    if (newOrderStr === null) return;
+    const newOrder = parseInt(newOrderStr);
+    if (!newName.trim() || !newOrder) { alert('Invalid name or order number'); return; }
+
+    if (newOrder !== currentOrder) {
+        if (newOrder > currentOrder) {
+            const { data: toShift } = await supabaseClient
+                .from('pr_fab_steps_master')
+                .select('id, step_order')
+                .eq('company_id', session.companyId)
+                .gt('step_order', currentOrder)
+                .lte('step_order', newOrder)
+                .neq('id', id)
+                .order('step_order', { ascending: true });
+            for (const s of (toShift || [])) {
+                const { error: shiftError } = await supabaseClient.from('pr_fab_steps_master').update({ step_order: s.step_order - 1 }).eq('id', s.id);
+                if (shiftError) { alert('Error renumbering: ' + shiftError.message); return; }
+            }
+        } else {
+            const { data: toShift } = await supabaseClient
+                .from('pr_fab_steps_master')
+                .select('id, step_order')
+                .eq('company_id', session.companyId)
+                .gte('step_order', newOrder)
+                .lt('step_order', currentOrder)
+                .neq('id', id)
+                .order('step_order', { ascending: false });
+            for (const s of (toShift || [])) {
+                const { error: shiftError } = await supabaseClient.from('pr_fab_steps_master').update({ step_order: s.step_order + 1 }).eq('id', s.id);
+                if (shiftError) { alert('Error renumbering: ' + shiftError.message); return; }
+            }
+        }
+    }
+
+    const { error } = await supabaseClient.from('pr_fab_steps_master').update({ step_name: newName.trim(), step_order: newOrder }).eq('id', id);
+    if (error) { alert('Error: ' + error.message); return; }
+    loadFabSteps();
+}
+
+async function deleteFabStep(id, name) {
+    if (!confirm('Delete fab step "' + name + '" permanently? If it is already used in any job\'s tracking, deletion will fail — use Deactivate instead in that case.')) return;
+    const { error } = await supabaseClient.from('pr_fab_steps_master').delete().eq('id', id);
+    if (error) { alert('Error deleting: ' + error.message + '\n\nThis step is likely already used in one or more jobs. Use Deactivate instead.'); return; }
+    loadFabSteps();
 }
 
 async function addFabStep() {
@@ -208,12 +263,67 @@ async function loadPaintProcesses() {
 
     let html = '<table class="pr-table"><tr><th>#</th><th>Process Name</th><th>Status</th><th></th></tr>';
     (data || []).forEach(p => {
-        html += '<tr><td>' + p.process_order + '</td><td>' + p.process_name + '</td>';
+        const jsName = p.process_name.replace(/'/g, "\\'");
+        html += '<tr><td>' + p.process_order + '</td><td>' + escapeHtml(p.process_name) + '</td>';
         html += '<td><span class="pr-badge pr-badge-' + (p.is_active ? 'accept' : 'reject') + '">' + (p.is_active ? 'Active' : 'Inactive') + '</span></td>';
-        html += '<td><button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_paint_process_master\',\'' + p.id + '\',' + p.is_active + ',loadPaintProcesses)">' + (p.is_active ? 'Deactivate' : 'Activate') + '</button></td></tr>';
+        html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
+        html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_paint_process_master\',\'' + p.id + '\',' + p.is_active + ',loadPaintProcesses)">' + (p.is_active ? 'Deactivate' : 'Activate') + '</button>';
+        html += '<button class="pr-btn pr-btn-outline" onclick="editPaintProcess(\'' + p.id + '\',\'' + jsName + '\',' + p.process_order + ',\'' + itemId + '\')">Edit</button>';
+        html += '<button class="pr-btn pr-btn-danger" onclick="deletePaintProcess(\'' + p.id + '\',\'' + jsName + '\')">Delete</button>';
+        html += '</td></tr>';
     });
     html += '</table>';
     container.innerHTML = html;
+}
+
+async function editPaintProcess(id, currentName, currentOrder, itemId) {
+    const newName = prompt('Process name:', currentName);
+    if (newName === null) return;
+    const newOrderStr = prompt('Order number:', currentOrder);
+    if (newOrderStr === null) return;
+    const newOrder = parseInt(newOrderStr);
+    if (!newName.trim() || !newOrder) { alert('Invalid name or order number'); return; }
+
+    if (newOrder !== currentOrder) {
+        if (newOrder > currentOrder) {
+            const { data: toShift } = await supabaseClient
+                .from('pr_paint_process_master')
+                .select('id, process_order')
+                .eq('paint_item_id', itemId)
+                .gt('process_order', currentOrder)
+                .lte('process_order', newOrder)
+                .neq('id', id)
+                .order('process_order', { ascending: true });
+            for (const p of (toShift || [])) {
+                const { error: shiftError } = await supabaseClient.from('pr_paint_process_master').update({ process_order: p.process_order - 1 }).eq('id', p.id);
+                if (shiftError) { alert('Error renumbering: ' + shiftError.message); return; }
+            }
+        } else {
+            const { data: toShift } = await supabaseClient
+                .from('pr_paint_process_master')
+                .select('id, process_order')
+                .eq('paint_item_id', itemId)
+                .gte('process_order', newOrder)
+                .lt('process_order', currentOrder)
+                .neq('id', id)
+                .order('process_order', { ascending: false });
+            for (const p of (toShift || [])) {
+                const { error: shiftError } = await supabaseClient.from('pr_paint_process_master').update({ process_order: p.process_order + 1 }).eq('id', p.id);
+                if (shiftError) { alert('Error renumbering: ' + shiftError.message); return; }
+            }
+        }
+    }
+
+    const { error } = await supabaseClient.from('pr_paint_process_master').update({ process_name: newName.trim(), process_order: newOrder }).eq('id', id);
+    if (error) { alert('Error: ' + error.message); return; }
+    loadPaintProcesses();
+}
+
+async function deletePaintProcess(id, name) {
+    if (!confirm('Delete paint process "' + name + '" permanently? If it is already used in any job\'s tracking, deletion will fail — use Deactivate instead in that case.')) return;
+    const { error } = await supabaseClient.from('pr_paint_process_master').delete().eq('id', id);
+    if (error) { alert('Error deleting: ' + error.message + '\n\nThis process is likely already used in one or more jobs. Use Deactivate instead.'); return; }
+    loadPaintProcesses();
 }
 
 async function addPaintProcess() {
