@@ -223,9 +223,14 @@ async function loadPaintItems() {
 
     let html = '<table class="pr-table"><tr><th>Item Name</th><th>Status</th><th></th></tr>';
     (data || []).forEach(i => {
-        html += '<tr><td>' + i.item_name + '</td>';
+        const jsName = i.item_name.replace(/'/g, "\\'");
+        html += '<tr><td>' + escapeHtml(i.item_name) + '</td>';
         html += '<td><span class="pr-badge pr-badge-' + (i.is_active ? 'accept' : 'reject') + '">' + (i.is_active ? 'Active' : 'Inactive') + '</span></td>';
-        html += '<td><button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_paint_items_master\',\'' + i.id + '\',' + i.is_active + ',loadPaintItems)">' + (i.is_active ? 'Deactivate' : 'Activate') + '</button></td></tr>';
+        html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
+        html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_paint_items_master\',\'' + i.id + '\',' + i.is_active + ',loadPaintItems)">' + (i.is_active ? 'Deactivate' : 'Activate') + '</button>';
+        html += '<button class="pr-btn pr-btn-outline" onclick="editPaintItem(\'' + i.id + '\',\'' + jsName + '\')">Edit</button>';
+        html += '<button class="pr-btn pr-btn-danger" onclick="deletePaintItem(\'' + i.id + '\',\'' + jsName + '\')">Delete</button>';
+        html += '</td></tr>';
     });
     html += '</table>';
     container.innerHTML = html;
@@ -249,6 +254,22 @@ async function addPaintItem() {
     const { error } = await supabaseClient.from('pr_paint_items_master').insert({ company_id: session.companyId, item_name: name });
     if (error) { alert('Error: ' + error.message); return; }
     document.getElementById('newPaintItemName').value = '';
+    loadPaintItems();
+}
+
+async function editPaintItem(id, currentName) {
+    const newName = prompt('Item name:', currentName);
+    if (newName === null) return;
+    if (!newName.trim()) { alert('Invalid name'); return; }
+    const { error } = await supabaseClient.from('pr_paint_items_master').update({ item_name: newName.trim() }).eq('id', id);
+    if (error) { alert('Error: ' + error.message); return; }
+    loadPaintItems();
+}
+
+async function deletePaintItem(id, name) {
+    if (!confirm('Delete paint item "' + name + '" permanently? If it already has processes or job tracking data, deletion will fail — use Deactivate instead in that case.')) return;
+    const { error } = await supabaseClient.from('pr_paint_items_master').delete().eq('id', id);
+    if (error) { alert('Error deleting: ' + error.message + '\n\nThis item likely still has processes or tracking data linked. Use Deactivate instead.'); return; }
     loadPaintItems();
 }
 
@@ -361,9 +382,14 @@ async function loadUnits() {
 
     let html = '<table class="pr-table"><tr><th>Unit Name</th><th>Status</th><th></th></tr>';
     (data || []).forEach(u => {
-        html += '<tr><td>' + u.unit_name + '</td>';
+        const jsName = u.unit_name.replace(/'/g, "\\'");
+        html += '<tr><td>' + escapeHtml(u.unit_name) + '</td>';
         html += '<td><span class="pr-badge pr-badge-' + (u.is_active ? 'accept' : 'reject') + '">' + (u.is_active ? 'Active' : 'Inactive') + '</span></td>';
-        html += '<td><button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_units\',\'' + u.id + '\',' + u.is_active + ',loadUnits)">' + (u.is_active ? 'Deactivate' : 'Activate') + '</button></td></tr>';
+        html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
+        html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_units\',\'' + u.id + '\',' + u.is_active + ',loadUnits)">' + (u.is_active ? 'Deactivate' : 'Activate') + '</button>';
+        html += '<button class="pr-btn pr-btn-outline" onclick="editUnit(\'' + u.id + '\',\'' + jsName + '\')">Edit</button>';
+        html += '<button class="pr-btn pr-btn-danger" onclick="deleteUnit(\'' + u.id + '\',\'' + jsName + '\')">Delete</button>';
+        html += '</td></tr>';
     });
     html += '</table>';
     container.innerHTML = html;
@@ -378,6 +404,22 @@ async function addUnit() {
     loadUnits();
 }
 
+async function editUnit(id, currentName) {
+    const newName = prompt('Unit name:', currentName);
+    if (newName === null) return;
+    if (!newName.trim()) { alert('Invalid name'); return; }
+    const { error } = await supabaseClient.from('pr_units').update({ unit_name: newName.trim() }).eq('id', id);
+    if (error) { alert('Error: ' + error.message); return; }
+    loadUnits();
+}
+
+async function deleteUnit(id, name) {
+    if (!confirm('Delete unit "' + name + '" permanently? If it already has jobs linked, deletion will fail — use Deactivate instead in that case.')) return;
+    const { error } = await supabaseClient.from('pr_units').delete().eq('id', id);
+    if (error) { alert('Error deleting: ' + error.message + '\n\nThis unit likely still has jobs linked. Use Deactivate instead.'); return; }
+    loadUnits();
+}
+
 // ============ INSPECTORS ============
 async function loadInspectors() {
     const container = document.getElementById('inspectorsList');
@@ -387,9 +429,14 @@ async function loadInspectors() {
 
     let html = '<table class="pr-table"><tr><th>Name</th><th>Status</th><th></th></tr>';
     (data || []).forEach(i => {
-        html += '<tr><td>' + i.inspector_name + '</td>';
+        const jsName = i.inspector_name.replace(/'/g, "\\'");
+        html += '<tr><td>' + escapeHtml(i.inspector_name) + '</td>';
         html += '<td><span class="pr-badge pr-badge-' + (i.is_active ? 'accept' : 'reject') + '">' + (i.is_active ? 'Active' : 'Inactive') + '</span></td>';
-        html += '<td><button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_inspectors\',\'' + i.id + '\',' + i.is_active + ',loadInspectors)">' + (i.is_active ? 'Deactivate' : 'Activate') + '</button></td></tr>';
+        html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
+        html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_inspectors\',\'' + i.id + '\',' + i.is_active + ',loadInspectors)">' + (i.is_active ? 'Deactivate' : 'Activate') + '</button>';
+        html += '<button class="pr-btn pr-btn-outline" onclick="editInspector(\'' + i.id + '\',\'' + jsName + '\')">Edit</button>';
+        html += '<button class="pr-btn pr-btn-danger" onclick="deleteInspector(\'' + i.id + '\',\'' + jsName + '\')">Delete</button>';
+        html += '</td></tr>';
     });
     html += '</table>';
     container.innerHTML = html;
@@ -401,6 +448,22 @@ async function addInspector() {
     const { error } = await supabaseClient.from('pr_inspectors').insert({ company_id: session.companyId, inspector_name: name });
     if (error) { alert('Error: ' + error.message); return; }
     document.getElementById('newInspectorName').value = '';
+    loadInspectors();
+}
+
+async function editInspector(id, currentName) {
+    const newName = prompt('Inspector name:', currentName);
+    if (newName === null) return;
+    if (!newName.trim()) { alert('Invalid name'); return; }
+    const { error } = await supabaseClient.from('pr_inspectors').update({ inspector_name: newName.trim() }).eq('id', id);
+    if (error) { alert('Error: ' + error.message); return; }
+    loadInspectors();
+}
+
+async function deleteInspector(id, name) {
+    if (!confirm('Delete inspector "' + name + '" permanently? Past inspection records will keep their data but lose the link to this inspector. This cannot be undone.')) return;
+    const { error } = await supabaseClient.from('pr_inspectors').delete().eq('id', id);
+    if (error) { alert('Error deleting: ' + error.message); return; }
     loadInspectors();
 }
 
@@ -419,6 +482,7 @@ async function loadWorkersMaster() {
         html += '<td><span class="pr-badge pr-badge-' + (w.is_active ? 'accept' : 'reject') + '">' + (w.is_active ? 'Active' : 'Inactive') + '</span></td>';
         html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
         html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_workers\',\'' + w.id + '\',' + w.is_active + ',loadWorkersMaster)">' + (w.is_active ? 'Deactivate' : 'Activate') + '</button>';
+        html += '<button class="pr-btn pr-btn-outline" onclick="editWorker(\'' + w.id + '\',\'' + jsName + '\',\'' + (w.category || '').replace(/'/g, "\\'") + '\')">Edit</button>';
         html += '<button class="pr-btn pr-btn-danger" onclick="deleteWorker(\'' + w.id + '\',\'' + jsName + '\')">Delete</button>';
         html += '</td></tr>';
     });
@@ -434,6 +498,17 @@ async function addWorker() {
     if (error) { alert('Error: ' + error.message); return; }
     document.getElementById('newWorkerName').value = '';
     document.getElementById('newWorkerCategory').value = '';
+    loadWorkersMaster();
+}
+
+async function editWorker(id, currentName, currentCategory) {
+    const newName = prompt('Worker name:', currentName);
+    if (newName === null) return;
+    if (!newName.trim()) { alert('Invalid name'); return; }
+    const newCategory = prompt('Category:', currentCategory);
+    if (newCategory === null) return;
+    const { error } = await supabaseClient.from('pr_workers').update({ worker_name: newName.trim(), category: newCategory.trim() || null }).eq('id', id);
+    if (error) { alert('Error: ' + error.message); return; }
     loadWorkersMaster();
 }
 
