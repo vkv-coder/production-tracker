@@ -221,33 +221,52 @@ async function loadFabTable() {
         html += '<input type="date" class="pr-input" value="' + (r.inspection_date || '') + '" onchange="updateFabField(\'' + r.id + '\',\'inspection_date\',this.value)">';
 
         const assignedInspSet = assignedInspMap[r.id] || new Set();
+        const assignedInsp = inspectorsList.filter(i => assignedInspSet.has(i.id));
+        const availableInsp = inspectorsList.filter(i => !assignedInspSet.has(i.id));
         html += '<label class="pr-label">Inspectors</label>';
-        html += '<div class="pr-worker-checklist">';
-        if (inspectorsList.length === 0) {
+        html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 6px;">';
+        if (assignedInsp.length === 0) {
+            html += '<span style="font-size:12px; color:#999;">None assigned</span>';
+        }
+        assignedInsp.forEach(i => {
+            html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' + escapeHtml(i.inspector_name) + '<span style="cursor:pointer; font-weight:bold;" onclick="toggleFabInspector(\'' + r.id + '\',\'' + i.id + '\',false)">&times;</span></span>';
+        });
+        html += '</div>';
+        if (availableInsp.length > 0) {
+            html += '<select class="pr-select" onchange="if(this.value){toggleFabInspector(\'' + r.id + '\',this.value,true);}">';
+            html += '<option value="">-- Add inspector --</option>';
+            availableInsp.forEach(i => {
+                html += '<option value="' + i.id + '">' + escapeHtml(i.inspector_name) + '</option>';
+            });
+            html += '</select>';
+        } else if (inspectorsList.length === 0) {
             html += '<p class="pr-empty" style="margin:4px 0;">No inspectors added yet.</p>';
         }
-        inspectorsList.forEach(i => {
-            const checked = assignedInspSet.has(i.id) ? 'checked' : '';
-            html += '<label style="display:flex; align-items:center; gap:6px; font-size:13px; margin:4px 0;">';
-            html += '<input type="checkbox" ' + checked + ' onchange="toggleFabInspector(\'' + r.id + '\',\'' + i.id + '\',this.checked)"> ' + escapeHtml(i.inspector_name);
-            html += '</label>';
-        });
-        html += '</div>';
 
         const assignedSet = assignedMap[r.id] || new Set();
-        html += '<label class="pr-label">Workers</label>';
-        html += '<div class="pr-worker-checklist">';
-        if (workersList.length === 0) {
-            html += '<p class="pr-empty" style="margin:4px 0;">No workers added yet.</p>';
+        const assignedWorkers = workersList.filter(w => assignedSet.has(w.id));
+        const availableWorkers = workersList.filter(w => !assignedSet.has(w.id));
+        html += '<label class="pr-label" style="margin-top:8px;">Workers</label>';
+        html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 6px;">';
+        if (assignedWorkers.length === 0) {
+            html += '<span style="font-size:12px; color:#999;">None assigned</span>';
         }
-        workersList.forEach(w => {
-            const checked = assignedSet.has(w.id) ? 'checked' : '';
+        assignedWorkers.forEach(w => {
             const label = escapeHtml(w.worker_name) + (w.category ? ' (' + escapeHtml(w.category) + ')' : '');
-            html += '<label style="display:flex; align-items:center; gap:6px; font-size:13px; margin:4px 0;">';
-            html += '<input type="checkbox" ' + checked + ' onchange="toggleFabWorker(\'' + r.id + '\',\'' + w.id + '\',this.checked)"> ' + label;
-            html += '</label>';
+            html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' + label + '<span style="cursor:pointer; font-weight:bold;" onclick="toggleFabWorker(\'' + r.id + '\',\'' + w.id + '\',false)">&times;</span></span>';
         });
         html += '</div>';
+        if (availableWorkers.length > 0) {
+            html += '<select class="pr-select" onchange="if(this.value){toggleFabWorker(\'' + r.id + '\',this.value,true);}">';
+            html += '<option value="">-- Add worker --</option>';
+            availableWorkers.forEach(w => {
+                const label = escapeHtml(w.worker_name) + (w.category ? ' (' + escapeHtml(w.category) + ')' : '');
+                html += '<option value="' + w.id + '">' + label + '</option>';
+            });
+            html += '</select>';
+        } else if (workersList.length === 0) {
+            html += '<p class="pr-empty" style="margin:4px 0;">No workers added yet.</p>';
+        }
 
         const remarksRequired = delayed && !r.remarks;
         html += '<label class="pr-label"' + (remarksRequired ? ' style="color:#dc3545;"' : '') + '>Remarks' + (remarksRequired ? ' (required - delayed)' : '') + '</label>';
@@ -279,21 +298,23 @@ async function updateFabField(trackingId, field, value) {
 async function toggleFabWorker(trackingId, workerId, checked) {
     if (checked) {
         const { error } = await supabaseClient.from('pr_fab_tracking_workers').insert({ fab_tracking_id: trackingId, worker_id: workerId });
-        if (error) alert('Error assigning worker: ' + error.message);
+        if (error) { alert('Error assigning worker: ' + error.message); return; }
     } else {
         const { error } = await supabaseClient.from('pr_fab_tracking_workers').delete().eq('fab_tracking_id', trackingId).eq('worker_id', workerId);
-        if (error) alert('Error removing worker: ' + error.message);
+        if (error) { alert('Error removing worker: ' + error.message); return; }
     }
+    loadFabTable();
 }
 
 async function toggleFabInspector(trackingId, inspectorId, checked) {
     if (checked) {
         const { error } = await supabaseClient.from('pr_fab_tracking_inspectors').insert({ fab_tracking_id: trackingId, inspector_id: inspectorId });
-        if (error) alert('Error assigning inspector: ' + error.message);
+        if (error) { alert('Error assigning inspector: ' + error.message); return; }
     } else {
         const { error } = await supabaseClient.from('pr_fab_tracking_inspectors').delete().eq('fab_tracking_id', trackingId).eq('inspector_id', inspectorId);
-        if (error) alert('Error removing inspector: ' + error.message);
+        if (error) { alert('Error removing inspector: ' + error.message); return; }
     }
+    loadFabTable();
 }
 
 function escapeHtml(str) {
