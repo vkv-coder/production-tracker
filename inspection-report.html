@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Production Tracker - Inspection Sheet</title>
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div class="pr-header">
+    <h1 id="reportHeader">Inspection Sheet</h1>
+    <button class="logout-btn" style="background:#555;" onclick="goBack()">Back</button>
+</div>
+
+<div class="pr-container">
+    <p id="subHeader" style="font-size:13px; color:#666; margin-top:-8px; margin-bottom:12px;"></p>
+    <div id="reportCard"><p class="pr-empty">Loading...</p></div>
+</div>
+
+<script src="config.js"></script>
+<script>
+
+const session = requireLogin();
+const urlParams = new URLSearchParams(window.location.search);
+const fabTrackingId = urlParams.get('fab_tracking');
+const paintTrackingId = urlParams.get('paint_tracking');
+const jobId = urlParams.get('job');
+const sourceType = fabTrackingId ? 'fab' : 'paint';
+const trackingId = fabTrackingId || paintTrackingId;
+const sourceCol = sourceType === 'fab' ? 'fab_tracking_id' : 'paint_tracking_id';
+
+let jobRecord = null;
+let report = null;
+let format = null;
+
+function goBack() {
+    window.location.href = 'job-detail.html?job=' + jobId;
+}
+
+async function init() {
+    if (!trackingId || !jobId) {
+        document.getElementById('reportCard').innerHTML = '<p class="pr-empty">No step specified.</p>';
+        return;
+    }
+
+    const { data: job } = await supabaseClient.from('pr_jobs').select('job_no').eq('id', jobId).maybeSingle();
+    jobRecord = job;
+
+    let masterInfo = null;
+    if (sourceType === 'fab') {
+        const { data: tracking } = await supabaseClient
+            .from('pr_fab_tracking')
+            .select('id, pr_fab_steps_master(step_name, inspection_format_id)')
+            .eq('id', trackingId)
+            .maybeSingle();
+        masterInfo = tracking ? { stepName: tracking.pr_fab_steps_master?.step_name, formatId: tracking.pr_fab_steps_master?.inspection_format_id } : null;
+    } else {
+        const { data: tracking } = await supabaseClient
+            .from('pr_paint_tracking')
+            .select('id, pr_paint_process_master(process_name, inspection_format_id)')
+            .eq('id', trackingId)
+            .maybeSingle();
+        masterInfo = tracking ? { stepName: tracking.pr_paint_process_master?.process_name, formatId: tracking.pr_paint_process_master?.inspection_format_id } : null;
+    }
+
+    if (!masterInfo || !masterInfo.formatId) {
+        document.getElementById('reportCard').innerHTML = '<p class="pr-empty">No inspection format attached to this step.</p>';
+        return;
+    }
+
+    const { data: fmt } = await supabaseClient.from('pr_inspection_formats_master').select('code, name').eq('id', masterInfo.formatId).maybeSingle();
+    format = fmt;
+
+    document.getElementById('reportHeader').textContent = format ? (format.code + ' — ' + format.name) : 'Inspection Sheet';
+    document.getElementById('subHeader').textContent = (jobRecord ? jobRecord.job_no : '') + ' · ' + (masterInfo.stepName || '');
+
+    report = await getOrCreateReport(masterInfo.formatId);
+    renderCard();
+}
+
+async function getOrCreateReport(formatId) {
+    const { data: existing } = await supabaseClient.from('pr_inspection_reports').select('*').eq(sourceCol, trackingId).maybeSingle();
+    if (existing) return existing;
+
+    const insertObj = {
+        company_id: session.companyId,
+        job_id: jobId,
+        format_id: formatId
+    };
+    insertObj[sourceCol] = trackingId;
+
+    const { data: created, error } = await supabaseClient.from('pr_inspection_reports').insert(insertObj).select('*').single();
+    if (error) {
+        // Race: another tab/device created it first — re-select instead of failing
+        const { data: retryExisting } = await supabaseClient.from('pr_inspection_reports').select('*').eq(sourceCol, trackingId).maybeSingle();
+        if (retryExisting) return retryExisting;
+        document.getElementById('reportCard').innerHTML = '<p class="pr-empty">⚠️ Could not open sheet: ' + error.message + '</p>';
+        return null;
+    }
+    return created;
+}
+
+function renderCard() {
+    const container = document.getElementById('reportCard');
+    if (!report) { container.innerHTML = '<p class="pr-empty">Could not load sheet.</p>'; return; }
+
+    let html = '<div class="pr-card">';
+    if (report.file_path) {
+        html += '<label class="pr-label">Current File</label>';
+        html += '<p style="font-size:14px; margin:4px 0;">' + escapeHtml(report.file_name || 'file') + '</p>';
+        html += '<p style="font-size:12px; color:#666; margin:4px 0 12px;">Uploaded by ' + escapeHtml(report.uploaded_by || '-') + (report.uploaded_at ? ' on ' + new Date(report.uploaded_at).toLocaleString() : '') + '</p>';
+        html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">';
+        html += '<button class="pr-btn pr-btn-primary" onclick="downloadSheet()">Download</button>';
+        html += '<button class="pr-btn pr-btn-danger" onclick="deleteSheet()">Delete</button>';
+        html += '</div>';
+        html += '<label class="pr-label">Replace File</label>';
+        html += '<input type="file" id="sheetFileInput" class="pr-input">';
+        html += '<button class="pr-btn pr-btn-outline" style="margin-top:8px;" onclick="uploadSheet()">Upload Replacement</button>';
+    } else {
+        html += '<label class="pr-label">Upload Inspection Sheet</label>';
+        html += '<input type="file" id="sheetFileInput" class="pr-input">';
+        html += '<button class="pr-btn pr-btn-primary" style="margin-top:8px;" onclick="uploadSheet()">Upload</button>';
+    }
+    html += '</div>';
+    container.innerHTML = html;
+}
+
+async function uploadSheet() {
+    const fileInput = document.getElementById('sheetFileInput');
+    const file = fileInput.files[0];
+    if (!file) { alert('Choose a file first'); return; }
+
+    const path = session.companyId + '/' + report.id + '/' + file.name;
+    const { error: uploadError } = await supabaseClient.storage.from('inspection-sheets').upload(path, file, { upsert: true });
+    if (uploadError) { alert('Error uploading: ' + uploadError.message); return; }
+
+    const { data: updated, error } = await supabaseClient
+        .from('pr_inspection_reports')
+        .update({ file_path: path, file_name: file.name, uploaded_by: session.name, uploaded_at: new Date().toISOString() })
+        .eq('id', report.id)
+        .select('*')
+        .single();
+    if (error) { alert('Error saving: ' + error.message); return; }
+
+    report = updated;
+    renderCard();
+}
+
+async function downloadSheet() {
+    if (!report.file_path) return;
+    const { data, error } = await supabaseClient.storage.from('inspection-sheets').createSignedUrl(report.file_path, 300);
+    if (error) { alert('Error: ' + error.message); return; }
+    window.open(data.signedUrl, '_blank');
+}
+
+async function deleteSheet() {
+    if (!confirm('Delete the uploaded sheet for this step? This cannot be undone.')) return;
+    if (report.file_path) {
+        await supabaseClient.storage.from('inspection-sheets').remove([report.file_path]);
+    }
+    const { data: updated, error } = await supabaseClient
+        .from('pr_inspection_reports')
+        .update({ file_path: null, file_name: null, uploaded_by: null, uploaded_at: null })
+        .eq('id', report.id)
+        .select('*')
+        .single();
+    if (error) { alert('Error: ' + error.message); return; }
+    report = updated;
+    renderCard();
+}
+
+function escapeHtml(str) {
+    return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+if (session) init();
+
+</script>
+
+</body>
+</html>
