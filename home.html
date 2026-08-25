@@ -93,6 +93,9 @@
 <script>
 
 const session = requireLogin();
+if (session && session.role === 'Partner') {
+    window.location.href = 'partner-home.html';
+}
 if (session) {
     document.getElementById('userNameLabel').textContent = session.name + ' (' + session.role + ')';
     if (session.role === 'Admin') document.getElementById('adminBtn').style.display = 'inline-block';

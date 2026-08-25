@@ -40,7 +40,7 @@ let gridData = [];
 let activeCell = null;
 
 function goBack() {
-    window.location.href = 'job-detail.html?job=' + jobId;
+    window.location.href = (session.role === 'Partner') ? 'partner-home.html' : ('job-detail.html?job=' + jobId);
 }
 
 async function init() {

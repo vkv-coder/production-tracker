@@ -57,6 +57,9 @@
 <script>
 
 const session = requireLogin();
+if (session && session.role === 'Partner') {
+    window.location.href = 'partner-home.html';
+}
 const urlParams = new URLSearchParams(window.location.search);
 const jobId = urlParams.get('job');
 
@@ -379,6 +382,16 @@ async function loadPaintTable() {
         .in('paint_tracking_id', paintTrackingIds);
     const paintReportExistsSet = new Set((paintReports || []).map(r => r.paint_tracking_id));
 
+    const { data: paintAssignments } = await supabaseClient
+        .from('pr_paint_tracking_workers')
+        .select('paint_tracking_id, worker_id')
+        .in('paint_tracking_id', paintTrackingIds);
+    const paintAssignedMap = {};
+    (paintAssignments || []).forEach(a => {
+        if (!paintAssignedMap[a.paint_tracking_id]) paintAssignedMap[a.paint_tracking_id] = new Set();
+        paintAssignedMap[a.paint_tracking_id].add(a.worker_id);
+    });
+
     let html = '';
     data.forEach(r => {
         html += '<div class="pr-card">';
@@ -396,11 +409,48 @@ async function loadPaintTable() {
         html += '<div><label class="pr-label">Stop Date</label><input type="date" class="pr-input" value="' + (r.stop_date || '') + '" onchange="updatePaintField(\'' + r.id + '\',\'stop_date\',this.value)"></div>';
         html += '<div><label class="pr-label">Stop Time</label><input type="time" class="pr-input" value="' + (r.stop_time || '') + '" onchange="updatePaintField(\'' + r.id + '\',\'stop_time\',this.value)"></div>';
         html += '</div>';
-        html += '<label class="pr-label">Remarks</label>';
+
+        const paintAssignedSet = paintAssignedMap[r.id] || new Set();
+        const paintAssignedWorkers = workersList.filter(w => paintAssignedSet.has(w.id));
+        const paintAvailableWorkers = workersList.filter(w => !paintAssignedSet.has(w.id));
+        html += '<label class="pr-label" style="margin-top:8px;">Workers</label>';
+        html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 6px;">';
+        if (paintAssignedWorkers.length === 0) {
+            html += '<span style="font-size:12px; color:#999;">None assigned</span>';
+        }
+        paintAssignedWorkers.forEach(w => {
+            const label = escapeHtml(w.worker_name) + (w.category ? ' (' + escapeHtml(w.category) + ')' : '');
+            html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' + label + '<span style="cursor:pointer; font-weight:bold;" onclick="togglePaintWorker(\'' + r.id + '\',\'' + w.id + '\',false)">&times;</span></span>';
+        });
+        html += '</div>';
+        if (paintAvailableWorkers.length > 0) {
+            html += '<select class="pr-select" onchange="if(this.value){togglePaintWorker(\'' + r.id + '\',this.value,true);}">';
+            html += '<option value="">-- Add worker --</option>';
+            paintAvailableWorkers.forEach(w => {
+                const label = escapeHtml(w.worker_name) + (w.category ? ' (' + escapeHtml(w.category) + ')' : '');
+                html += '<option value="' + w.id + '">' + label + '</option>';
+            });
+            html += '</select>';
+        } else if (workersList.length === 0) {
+            html += '<p class="pr-empty" style="margin:4px 0;">No workers added yet.</p>';
+        }
+
+        html += '<label class="pr-label" style="margin-top:8px;">Remarks</label>';
         html += '<input type="text" class="pr-input" value="' + (r.remarks || '').replace(/"/g, '&quot;') + '" onchange="updatePaintField(\'' + r.id + '\',\'remarks\',this.value)">';
         html += '</div>';
     });
     container.innerHTML = html;
+}
+
+async function togglePaintWorker(trackingId, workerId, checked) {
+    if (checked) {
+        const { error } = await supabaseClient.from('pr_paint_tracking_workers').insert({ paint_tracking_id: trackingId, worker_id: workerId });
+        if (error) { alert('Error assigning worker: ' + error.message); return; }
+    } else {
+        const { error } = await supabaseClient.from('pr_paint_tracking_workers').delete().eq('paint_tracking_id', trackingId).eq('worker_id', workerId);
+        if (error) { alert('Error removing worker: ' + error.message); return; }
+    }
+    loadPaintTable();
 }
 
 async function updatePaintField(trackingId, field, value) {

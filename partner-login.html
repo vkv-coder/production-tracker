@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Production Tracker - Partner Login</title>
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body style="display:flex; align-items:center; justify-content:center; min-height:100vh; background:#1e3a5f;">
+
+<div style="background:#fff; border-radius:14px; padding:30px 24px; width:100%; max-width:360px; box-shadow:0 8px 24px rgba(0,0,0,0.25);">
+
+    <h1 style="text-align:center; font-size:22px; color:#1e3a5f; margin-bottom:4px;">Partner Login</h1>
+    <p style="text-align:center; font-size:13px; color:#777; margin-bottom:22px;">For assigned workers to access their inspection sheets</p>
+
+    <div id="requestBox">
+        <label class="pr-label">Email</label>
+        <input type="email" id="emailInput" class="pr-input" placeholder="Enter your registered email">
+        <button onclick="sendLoginLink()" class="pr-btn pr-btn-primary" style="width:100%; padding:12px; font-size:15px; margin-top:6px;">Send Login Link</button>
+        <p style="text-align:center; margin-top:14px;">
+            <a href="index.html" style="font-size:13px; color:#1e3a5f; text-decoration:underline;">Back to main login</a>
+        </p>
+    </div>
+
+    <p id="statusMsg" style="font-size:13px; text-align:center; margin-top:12px; display:none;"></p>
+
+</div>
+
+<script src="config.js"></script>
+<script>
+
+function showStatus(msg, isError) {
+    const el = document.getElementById('statusMsg');
+    el.textContent = msg;
+    el.style.color = isError ? '#d9534f' : '#2e7d32';
+    el.style.display = 'block';
+}
+
+async function sendLoginLink() {
+    const email = document.getElementById('emailInput').value.trim();
+    if (!email) { showStatus('Enter your email', true); return; }
+
+    const { error } = await supabaseClient.auth.signInWithOtp({
+        email: email,
+        options: { emailRedirectTo: 'https://production.anyapps.in/partner-login.html' }
+    });
+
+    if (error) { showStatus('Error: ' + error.message, true); return; }
+    document.getElementById('requestBox').style.display = 'none';
+    showStatus('Login link sent! Check your email and click the link to continue.', false);
+}
+
+async function resolveSession() {
+    const { data: { session: authSession } } = await supabaseClient.auth.getSession();
+    if (!authSession) return; // no magic-link callback in progress, show the normal request form
+
+    document.getElementById('requestBox').style.display = 'none';
+    showStatus('Signing you in...', false);
+
+    const { data: { user } } = await supabaseClient.auth.getUser();
+    if (!user) { showStatus('Could not verify your login. Try again.', true); return; }
+
+    // Already linked to a worker?
+    let { data: worker } = await supabaseClient.from('pr_workers').select('id, worker_name, company_id, is_active').eq('auth_user_id', user.id).maybeSingle();
+
+    if (!worker) {
+        // First-time login: claim the pr_workers row matching this email
+        const { data: candidate } = await supabaseClient.from('pr_workers').select('id, worker_name, company_id, is_active').ilike('email', user.email).is('auth_user_id', null).maybeSingle();
+        if (candidate) {
+            const { data: claimed, error: claimError } = await supabaseClient.from('pr_workers').update({ auth_user_id: user.id }).eq('id', candidate.id).is('auth_user_id', null).select('id, worker_name, company_id, is_active').maybeSingle();
+            if (!claimError && claimed) worker = claimed;
+        }
+    }
+
+    if (!worker || !worker.is_active) {
+        await supabaseClient.auth.signOut();
+        showStatus('This email isn\'t registered as an active worker. Contact your admin.', true);
+        document.getElementById('requestBox').style.display = 'block';
+        return;
+    }
+
+    setSession({
+        userId: worker.id,
+        name: worker.worker_name,
+        role: 'Partner',
+        companyId: worker.company_id
+    });
+
+    window.location.href = 'partner-home.html';
+}
+
+resolveSession();
+
+</script>
+
+</body>
+</html>

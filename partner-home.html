@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Production Tracker - My Steps</title>
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div class="pr-header">
+    <h1>My Assigned Steps</h1>
+    <button class="logout-btn" onclick="clearSession(); window.location.href='index.html';">Logout</button>
+</div>
+
+<div class="pr-container">
+    <p style="font-size:13px; color:#666; margin-top:-8px;">Logged in as <strong id="workerName"></strong></p>
+    <div id="stepsList"><p class="pr-empty">Loading...</p></div>
+</div>
+
+<script src="config.js"></script>
+<script>
+
+const session = requireLogin();
+if (session && session.role !== 'Partner') {
+    window.location.href = 'home.html';
+}
+
+async function loadAssignedSteps() {
+    document.getElementById('workerName').textContent = session.name;
+    const container = document.getElementById('stepsList');
+    container.innerHTML = '<p class="pr-empty">Loading...</p>';
+
+    const [{ data: fabAssignments }, { data: paintAssignments }] = await Promise.all([
+        supabaseClient
+            .from('pr_fab_tracking_workers')
+            .select('pr_fab_tracking(id, job_id, pr_jobs(job_no, customer_name, status), pr_fab_steps_master(step_name, step_order, inspection_format_id, pr_inspection_formats_master(code)))')
+            .eq('worker_id', session.userId),
+        supabaseClient
+            .from('pr_paint_tracking_workers')
+            .select('pr_paint_tracking(id, job_id, pr_jobs(job_no, customer_name, status), pr_paint_process_master(process_name, process_order, inspection_format_id, pr_inspection_formats_master(code)))')
+            .eq('worker_id', session.userId)
+    ]);
+
+    const items = [];
+    (fabAssignments || []).forEach(a => {
+        const t = a.pr_fab_tracking;
+        if (t) items.push({ type: 'fab', trackingId: t.id, jobId: t.job_id, job: t.pr_jobs, stepName: t.pr_fab_steps_master?.step_name, order: t.pr_fab_steps_master?.step_order, formatId: t.pr_fab_steps_master?.inspection_format_id, formatCode: t.pr_fab_steps_master?.pr_inspection_formats_master?.code });
+    });
+    (paintAssignments || []).forEach(a => {
+        const t = a.pr_paint_tracking;
+        if (t) items.push({ type: 'paint', trackingId: t.id, jobId: t.job_id, job: t.pr_jobs, stepName: t.pr_paint_process_master?.process_name, order: t.pr_paint_process_master?.process_order, formatId: t.pr_paint_process_master?.inspection_format_id, formatCode: t.pr_paint_process_master?.pr_inspection_formats_master?.code });
+    });
+
+    if (items.length === 0) {
+        container.innerHTML = '<p class="pr-empty">No steps assigned to you yet.</p>';
+        return;
+    }
+
+    let html = '';
+    items.forEach(item => {
+        html += '<div class="pr-card">';
+        html += '<div class="pr-card-title">' + (item.job ? escapeHtml(item.job.job_no) : 'Job') + (item.job && item.job.customer_name ? ' - ' + escapeHtml(item.job.customer_name) : '') + '</div>';
+        html += '<div class="pr-card-sub">' + (item.job ? escapeHtml(item.job.status || '') + ' &middot; ' : '') + (item.order != null ? item.order + '. ' : '') + escapeHtml(item.stepName || '') + '</div>';
+        if (item.formatId) {
+            const param = item.type === 'fab' ? 'fab_tracking' : 'paint_tracking';
+            html += '<a class="pr-btn pr-btn-outline" style="margin-top:8px; display:inline-block;" href="inspection-report.html?' + param + '=' + item.trackingId + '&job=' + item.jobId + '">&#128206; ' + escapeHtml(item.formatCode || 'Inspection') + ' Inspection Sheet</a>';
+        } else {
+            html += '<p class="pr-empty" style="margin:6px 0 0;">No inspection sheet on this step.</p>';
+        }
+        html += '</div>';
+    });
+    container.innerHTML = html;
+}
+
+function escapeHtml(str) {
+    return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+if (session) loadAssignedSteps();
+
+</script>
+
+</body>
+</html>
