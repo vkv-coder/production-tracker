@@ -136,7 +136,15 @@ async function loadSheetIntoGrid() {
     renderGrid();
 }
 
+function normalizeGrid() {
+    const maxCols = gridData.reduce((max, row) => Math.max(max, row.length), 1);
+    gridData.forEach(row => {
+        while (row.length < maxCols) row.push('');
+    });
+}
+
 function renderGrid() {
+    normalizeGrid();
     const container = document.getElementById('reportCard');
     let html = '';
 
@@ -173,7 +181,7 @@ function updateCell(r, c, value) {
 }
 
 function addRow() {
-    const cols = gridData.length > 0 ? gridData[0].length : 6;
+    const cols = gridData.reduce((max, row) => Math.max(max, row.length), 6);
     gridData.push(Array(cols).fill(''));
     renderGrid();
 }
