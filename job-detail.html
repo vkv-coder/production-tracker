@@ -13,7 +13,25 @@
 <div class="pr-header">
     <h1 id="jobNoHeader">Job Detail</h1>
     <div style="display:flex; align-items:center; gap:10px;">
+        <button class="logout-btn" style="background:#28a745;" onclick="toggleJobEdit()">Edit</button>
         <button class="logout-btn" style="background:#555;" onclick="window.location.href='home.html'">Back</button>
+    </div>
+</div>
+
+<div class="pr-container">
+    <div id="jobEditPanel" class="pr-card" style="display:none; margin-bottom:12px;">
+        <label class="pr-label">Job No.</label>
+        <input type="text" id="jobEditNo" class="pr-input">
+        <label class="pr-label">Customer</label>
+        <input type="text" id="jobEditCust" class="pr-input">
+        <label class="pr-label">Unit</label>
+        <select id="jobEditUnit" class="pr-select"><option value="">-- None --</option></select>
+        <label class="pr-label">Description / Qty</label>
+        <textarea id="jobEditDesc" class="pr-input" rows="2"></textarea>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+            <button class="pr-btn pr-btn-primary" onclick="saveJobEdit()">Save</button>
+            <button class="pr-btn pr-btn-outline" onclick="toggleJobEdit()">Cancel</button>
+        </div>
     </div>
 </div>
 
@@ -52,13 +70,7 @@ if (!jobId) {
 }
 
 async function init() {
-    const { data: job } = await supabaseClient.from('pr_jobs').select('job_no, customer_name, pr_units(unit_name)').eq('id', jobId).maybeSingle();
-    if (job) {
-        let headerText = job.job_no;
-        if (job.pr_units) headerText += ' [' + job.pr_units.unit_name + ']';
-        if (job.customer_name) headerText += ' - ' + job.customer_name;
-        document.getElementById('jobNoHeader').textContent = headerText;
-    }
+    await loadJobHeader();
 
     const { data: insp } = await supabaseClient.from('pr_inspectors').select('id, inspector_name').eq('company_id', session.companyId).eq('is_active', true);
     inspectorsList = insp || [];
@@ -70,6 +82,55 @@ async function init() {
     paintItems = items || [];
 
     loadFabTable();
+}
+
+let currentJob = null;
+
+async function loadJobHeader() {
+    const { data: job } = await supabaseClient.from('pr_jobs').select('job_no, customer_name, unit_id, description, pr_units(unit_name)').eq('id', jobId).maybeSingle();
+    if (job) {
+        currentJob = job;
+        let headerText = job.job_no;
+        if (job.pr_units) headerText += ' [' + job.pr_units.unit_name + ']';
+        if (job.customer_name) headerText += ' - ' + job.customer_name;
+        document.getElementById('jobNoHeader').textContent = headerText;
+    }
+}
+
+async function toggleJobEdit() {
+    const panel = document.getElementById('jobEditPanel');
+    if (panel.style.display === 'none') {
+        document.getElementById('jobEditNo').value = currentJob ? currentJob.job_no : '';
+        document.getElementById('jobEditCust').value = currentJob ? (currentJob.customer_name || '') : '';
+        document.getElementById('jobEditDesc').value = currentJob ? (currentJob.description || '') : '';
+
+        const unitSel = document.getElementById('jobEditUnit');
+        unitSel.innerHTML = '<option value="">-- None --</option>';
+        const { data: units } = await supabaseClient.from('pr_units').select('id, unit_name').eq('company_id', session.companyId).eq('is_active', true).order('unit_name');
+        (units || []).forEach(u => {
+            const opt = document.createElement('option');
+            opt.value = u.id;
+            opt.textContent = u.unit_name;
+            if (currentJob && currentJob.unit_id === u.id) opt.selected = true;
+            unitSel.appendChild(opt);
+        });
+
+        panel.style.display = 'block';
+    } else {
+        panel.style.display = 'none';
+    }
+}
+
+async function saveJobEdit() {
+    const jobNo = document.getElementById('jobEditNo').value.trim();
+    const customer = document.getElementById('jobEditCust').value.trim();
+    const unitId = document.getElementById('jobEditUnit').value;
+    const desc = document.getElementById('jobEditDesc').value.trim();
+    if (!jobNo) { alert('Job No. is required'); return; }
+    const { error } = await supabaseClient.from('pr_jobs').update({ job_no: jobNo, customer_name: customer || null, unit_id: unitId || null, description: desc || null }).eq('id', jobId);
+    if (error) { alert('Error: ' + error.message); return; }
+    document.getElementById('jobEditPanel').style.display = 'none';
+    loadJobHeader();
 }
 
 function switchTab(tab) {
