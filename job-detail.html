@@ -148,7 +148,7 @@ async function loadFabTable() {
 
     const { data } = await supabaseClient
         .from('pr_fab_tracking')
-        .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, inspection_date, remarks, pr_fab_steps_master(step_name, step_order, inspection_format_id, pr_inspection_formats_master(code))')
+        .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, inspection_date, start_delay_reason, end_delay_reason, pr_fab_steps_master(step_name, step_order, inspection_format_id, pr_inspection_formats_master(code))')
         .eq('job_id', jobId);
 
     if (!data || data.length === 0) {
@@ -268,9 +268,16 @@ async function loadFabTable() {
             html += '<p class="pr-empty" style="margin:4px 0;">No workers added yet.</p>';
         }
 
-        const remarksRequired = delayed && !r.remarks;
-        html += '<label class="pr-label"' + (remarksRequired ? ' style="color:#dc3545;"' : '') + '>Remarks' + (remarksRequired ? ' (required - delayed)' : '') + '</label>';
-        html += '<input type="text" class="pr-input" style="' + (remarksRequired ? 'border:2px solid #dc3545;' : '') + '" placeholder="' + (remarksRequired ? 'Enter reason for delay' : '') + '" value="' + (r.remarks || '').replace(/"/g, '&quot;') + '" onchange="updateFabField(\'' + r.id + '\',\'remarks\',this.value)">';
+        if (startDelayed) {
+            const startReasonRequired = !r.start_delay_reason;
+            html += '<label class="pr-label" style="margin-top:8px;' + (startReasonRequired ? ' color:#dc3545;' : '') + '">Start Late Reason' + (startReasonRequired ? ' (required)' : '') + '</label>';
+            html += '<input type="text" class="pr-input" style="' + (startReasonRequired ? 'border:2px solid #dc3545;' : '') + '" placeholder="' + (startReasonRequired ? 'Enter reason for late start' : '') + '" value="' + (r.start_delay_reason || '').replace(/"/g, '&quot;') + '" onchange="updateFabField(\'' + r.id + '\',\'start_delay_reason\',this.value)">';
+        }
+        if (endDelayed) {
+            const endReasonRequired = !r.end_delay_reason;
+            html += '<label class="pr-label" style="margin-top:8px;' + (endReasonRequired ? ' color:#dc3545;' : '') + '">End Late Reason' + (endReasonRequired ? ' (required)' : '') + '</label>';
+            html += '<input type="text" class="pr-input" style="' + (endReasonRequired ? 'border:2px solid #dc3545;' : '') + '" placeholder="' + (endReasonRequired ? 'Enter reason for late end' : '') + '" value="' + (r.end_delay_reason || '').replace(/"/g, '&quot;') + '" onchange="updateFabField(\'' + r.id + '\',\'end_delay_reason\',this.value)">';
+        }
 
         html += '</div>';
     });
@@ -283,12 +290,15 @@ async function updateFabField(trackingId, field, value) {
     const { error } = await supabaseClient.from('pr_fab_tracking').update(updateObj).eq('id', trackingId);
     if (error) { alert('Error saving: ' + error.message); return; }
     if (field === 'actual_start' || field === 'actual_end' || field === 'planned_start' || field === 'planned_end') {
-        const { data: row } = await supabaseClient.from('pr_fab_tracking').select('planned_start, planned_end, actual_start, actual_end, remarks').eq('id', trackingId).single();
+        const { data: row } = await supabaseClient.from('pr_fab_tracking').select('planned_start, planned_end, actual_start, actual_end, start_delay_reason, end_delay_reason').eq('id', trackingId).single();
         if (row) {
             const startDelayed = !!(row.actual_start && row.planned_start && row.actual_start > row.planned_start);
             const endDelayed = !!(row.actual_end && row.planned_end && row.actual_end > row.planned_end);
-            if ((startDelayed || endDelayed) && !row.remarks) {
-                alert('This step is delayed vs. plan. Please enter Remarks explaining the delay.');
+            const missing = [];
+            if (startDelayed && !row.start_delay_reason) missing.push('start');
+            if (endDelayed && !row.end_delay_reason) missing.push('end');
+            if (missing.length > 0) {
+                alert('This step is delayed vs. plan. Please enter the ' + (missing.length > 1 ? 'reasons' : 'reason') + ' for the late ' + missing.join(' and ') + '.');
             }
         }
     }
