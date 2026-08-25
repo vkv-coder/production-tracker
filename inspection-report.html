@@ -7,6 +7,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -35,6 +36,7 @@ const sourceCol = sourceType === 'fab' ? 'fab_tracking_id' : 'paint_tracking_id'
 let jobRecord = null;
 let report = null;
 let format = null;
+let gridData = [];
 
 function goBack() {
     window.location.href = 'job-detail.html?job=' + jobId;
@@ -78,7 +80,7 @@ async function init() {
     document.getElementById('subHeader').textContent = (jobRecord ? jobRecord.job_no : '') + ' · ' + (masterInfo.stepName || '');
 
     report = await getOrCreateReport(masterInfo.formatId);
-    renderCard();
+    if (report) await loadSheetIntoGrid();
 }
 
 async function getOrCreateReport(formatId) {
@@ -103,50 +105,107 @@ async function getOrCreateReport(formatId) {
     return created;
 }
 
-function renderCard() {
-    const container = document.getElementById('reportCard');
-    if (!report) { container.innerHTML = '<p class="pr-empty">Could not load sheet.</p>'; return; }
+function blankGrid() {
+    return Array.from({ length: 8 }, () => Array(6).fill(''));
+}
 
-    let html = '<div class="pr-card">';
+async function loadSheetIntoGrid() {
+    const container = document.getElementById('reportCard');
+    container.innerHTML = '<p class="pr-empty">Loading sheet...</p>';
+
     if (report.file_path) {
-        html += '<label class="pr-label">Current File</label>';
-        html += '<p style="font-size:14px; margin:4px 0;">' + escapeHtml(report.file_name || 'file') + '</p>';
-        html += '<p style="font-size:12px; color:#666; margin:4px 0 12px;">Uploaded by ' + escapeHtml(report.uploaded_by || '-') + (report.uploaded_at ? ' on ' + new Date(report.uploaded_at).toLocaleString() : '') + '</p>';
-        html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">';
-        html += '<button class="pr-btn pr-btn-primary" onclick="downloadSheet()">Download</button>';
-        html += '<button class="pr-btn pr-btn-danger" onclick="deleteSheet()">Delete</button>';
-        html += '</div>';
-        html += '<label class="pr-label">Replace File</label>';
-        html += '<input type="file" id="sheetFileInput" class="pr-input">';
-        html += '<button class="pr-btn pr-btn-outline" style="margin-top:8px;" onclick="uploadSheet()">Upload Replacement</button>';
+        const { data: blob, error } = await supabaseClient.storage.from('inspection-sheets').download(report.file_path);
+        if (error) {
+            container.innerHTML = '<p class="pr-empty">⚠️ Could not load sheet file: ' + escapeHtml(error.message) + '</p>';
+            return;
+        }
+        try {
+            const arrayBuffer = await blob.arrayBuffer();
+            const wb = XLSX.read(arrayBuffer, { type: 'array' });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            gridData = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }).map(row => row.map(c => String(c)));
+            if (gridData.length === 0) gridData = blankGrid();
+        } catch (e) {
+            container.innerHTML = '<p class="pr-empty">⚠️ Could not read this file as a spreadsheet (' + escapeHtml(e.message) + '). Download it below instead.</p>' +
+                '<button class="pr-btn pr-btn-primary" style="margin-top:8px;" onclick="downloadSheet()">Download</button>';
+            return;
+        }
     } else {
-        html += '<label class="pr-label">Upload Inspection Sheet</label>';
-        html += '<input type="file" id="sheetFileInput" class="pr-input">';
-        html += '<button class="pr-btn pr-btn-primary" style="margin-top:8px;" onclick="uploadSheet()">Upload</button>';
+        gridData = blankGrid();
+    }
+    renderGrid();
+}
+
+function renderGrid() {
+    const container = document.getElementById('reportCard');
+    let html = '';
+
+    if (report.uploaded_at) {
+        html += '<p style="font-size:12px; color:#666; margin:0 0 8px;">Last saved by ' + escapeHtml(report.uploaded_by || '-') + ' on ' + new Date(report.uploaded_at).toLocaleString() + '</p>';
+    }
+
+    html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">';
+    html += '<button class="pr-btn pr-btn-primary" onclick="saveSheetGrid()">Save</button>';
+    html += '<button class="pr-btn pr-btn-outline" onclick="addRow()">+ Row</button>';
+    html += '<button class="pr-btn pr-btn-outline" onclick="addColumn()">+ Column</button>';
+    if (report.file_path) {
+        html += '<button class="pr-btn pr-btn-outline" onclick="downloadSheet()">Download Copy</button>';
+        html += '<button class="pr-btn pr-btn-danger" onclick="deleteSheet()">Clear Sheet</button>';
     }
     html += '</div>';
+
+    html += '<div style="overflow-x:auto; border:1px solid #ddd; border-radius:6px;">';
+    html += '<table style="border-collapse:collapse; width:100%;">';
+    gridData.forEach((row, r) => {
+        html += '<tr>';
+        row.forEach((cell, c) => {
+            html += '<td style="padding:0; border:1px solid #eee;"><input value="' + escapeHtml(cell) + '" onchange="updateCell(' + r + ',' + c + ',this.value)" style="border:none; padding:6px 8px; font-size:13px; width:110px; min-width:110px;"></td>';
+        });
+        html += '</tr>';
+    });
+    html += '</table></div>';
+
     container.innerHTML = html;
 }
 
-async function uploadSheet() {
-    const fileInput = document.getElementById('sheetFileInput');
-    const file = fileInput.files[0];
-    if (!file) { alert('Choose a file first'); return; }
+function updateCell(r, c, value) {
+    gridData[r][c] = value;
+}
 
-    const path = session.companyId + '/' + report.id + '/' + file.name;
-    const { error: uploadError } = await supabaseClient.storage.from('inspection-sheets').upload(path, file, { upsert: true });
-    if (uploadError) { alert('Error uploading: ' + uploadError.message); return; }
+function addRow() {
+    const cols = gridData.length > 0 ? gridData[0].length : 6;
+    gridData.push(Array(cols).fill(''));
+    renderGrid();
+}
+
+function addColumn() {
+    gridData.forEach(row => row.push(''));
+    renderGrid();
+}
+
+async function saveSheetGrid() {
+    const ws = XLSX.utils.aoa_to_sheet(gridData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+    const wbout = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const blob = new Blob([wbout], { type: 'application/octet-stream' });
+
+    const fileName = (report.file_name && report.file_name.trim()) || ((format ? format.code : 'sheet') + '.xlsx');
+    const path = session.companyId + '/' + report.id + '/' + fileName;
+
+    const { error: uploadError } = await supabaseClient.storage.from('inspection-sheets').upload(path, blob, { upsert: true });
+    if (uploadError) { alert('Error saving: ' + uploadError.message); return; }
 
     const { data: updated, error } = await supabaseClient
         .from('pr_inspection_reports')
-        .update({ file_path: path, file_name: file.name, uploaded_by: session.name, uploaded_at: new Date().toISOString() })
+        .update({ file_path: path, file_name: fileName, uploaded_by: session.name, uploaded_at: new Date().toISOString() })
         .eq('id', report.id)
         .select('*')
         .single();
     if (error) { alert('Error saving: ' + error.message); return; }
 
     report = updated;
-    renderCard();
+    renderGrid();
 }
 
 async function downloadSheet() {
@@ -157,7 +216,7 @@ async function downloadSheet() {
 }
 
 async function deleteSheet() {
-    if (!confirm('Delete the uploaded sheet for this step? This cannot be undone.')) return;
+    if (!confirm('Clear the sheet for this step? This removes the saved file; the grid will reset to blank. This cannot be undone.')) return;
     if (report.file_path) {
         await supabaseClient.storage.from('inspection-sheets').remove([report.file_path]);
     }
@@ -169,7 +228,8 @@ async function deleteSheet() {
         .single();
     if (error) { alert('Error: ' + error.message); return; }
     report = updated;
-    renderCard();
+    gridData = blankGrid();
+    renderGrid();
 }
 
 function escapeHtml(str) {
