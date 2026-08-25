@@ -523,7 +523,10 @@ async function deleteWorker(workerId, workerName) {
 async function loadJobsAdmin() {
     const container = document.getElementById('jobsList');
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
-    const { data, error } = await supabaseClient.from('pr_jobs').select('*, pr_units(unit_name)').eq('company_id', session.companyId).order('created_at', { ascending: false });
+    const [{ data, error }, { data: units }] = await Promise.all([
+        supabaseClient.from('pr_jobs').select('*, pr_units(unit_name)').eq('company_id', session.companyId).order('created_at', { ascending: false }),
+        supabaseClient.from('pr_units').select('id, unit_name').eq('company_id', session.companyId).eq('is_active', true).order('unit_name')
+    ]);
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
     if (!data || data.length === 0) { container.innerHTML = '<p class="pr-empty">No jobs found.</p>'; return; }
@@ -531,8 +534,14 @@ async function loadJobsAdmin() {
     let html = '';
     data.forEach(j => {
         html += '<div class="pr-card">';
-        html += '<label class="pr-label">Job No.</label><input type="text" class="pr-input" id="jobNo_' + j.id + '" value="' + j.job_no + '">';
-        html += '<label class="pr-label">Customer</label><input type="text" class="pr-input" id="jobCust_' + j.id + '" value="' + (j.customer_name || '') + '">';
+        html += '<label class="pr-label">Job No.</label><input type="text" class="pr-input" id="jobNo_' + j.id + '" value="' + escapeHtml(j.job_no) + '">';
+        html += '<label class="pr-label">Customer</label><input type="text" class="pr-input" id="jobCust_' + j.id + '" value="' + escapeHtml(j.customer_name || '') + '">';
+        html += '<label class="pr-label">Unit</label><select class="pr-select" id="jobUnit_' + j.id + '"><option value="">-- None --</option>';
+        (units || []).forEach(u => {
+            html += '<option value="' + u.id + '"' + (j.unit_id === u.id ? ' selected' : '') + '>' + escapeHtml(u.unit_name) + '</option>';
+        });
+        html += '</select>';
+        html += '<label class="pr-label">Description / Qty</label><textarea class="pr-input" rows="2" id="jobDesc_' + j.id + '">' + escapeHtml(j.description || '') + '</textarea>';
         html += '<label class="pr-label">Status</label><select class="pr-select" id="jobStatus_' + j.id + '">';
         ['Running','Completed','On Hold'].forEach(s => {
             html += '<option value="' + s + '"' + (j.status === s ? ' selected' : '') + '>' + s + '</option>';
@@ -540,7 +549,7 @@ async function loadJobsAdmin() {
         html += '</select>';
         html += '<div style="display:flex; gap:8px; margin-top:8px;">';
         html += '<button class="pr-btn pr-btn-primary" onclick="saveJobEdit(\'' + j.id + '\')">Save Changes</button>';
-        html += '<button class="pr-btn pr-btn-danger" onclick="deleteJob(\'' + j.id + '\',\'' + j.job_no + '\')">Delete Job</button>';
+        html += '<button class="pr-btn pr-btn-danger" onclick="deleteJob(\'' + j.id + '\',\'' + j.job_no.replace(/'/g, "\\'") + '\')">Delete Job</button>';
         html += '</div></div>';
     });
     container.innerHTML = html;
@@ -549,8 +558,10 @@ async function loadJobsAdmin() {
 async function saveJobEdit(jobId) {
     const jobNo = document.getElementById('jobNo_' + jobId).value.trim();
     const customer = document.getElementById('jobCust_' + jobId).value.trim();
+    const unitId = document.getElementById('jobUnit_' + jobId).value;
+    const desc = document.getElementById('jobDesc_' + jobId).value.trim();
     const status = document.getElementById('jobStatus_' + jobId).value;
-    const { error } = await supabaseClient.from('pr_jobs').update({ job_no: jobNo, customer_name: customer, status: status }).eq('id', jobId);
+    const { error } = await supabaseClient.from('pr_jobs').update({ job_no: jobNo, customer_name: customer || null, unit_id: unitId || null, description: desc || null, status: status }).eq('id', jobId);
     if (error) { alert('Error: ' + error.message); return; }
     alert('Saved');
     loadJobsAdmin();
