@@ -239,9 +239,19 @@ async function saveFabStepEdit(id, currentOrder) {
 }
 
 async function deleteFabStep(id, name) {
-    if (!confirm('Delete fab step "' + name + '" permanently? If it is already used in any job\'s tracking, deletion will fail — use Deactivate instead in that case.')) return;
+    if (!confirm('Delete fab step "' + name + '" permanently?')) return;
     const { error } = await supabaseClient.from('pr_fab_steps_master').delete().eq('id', id);
-    if (error) { alert('Error deleting: ' + error.message + '\n\nThis step is likely already used in one or more jobs. Use Deactivate instead.'); return; }
+    if (!error) { loadFabSteps(); return; }
+
+    const { count } = await supabaseClient.from('pr_fab_tracking').select('id', { count: 'exact', head: true }).eq('fab_step_id', id);
+    const forceMsg = 'This step is used in ' + (count || 'some') + ' job(s)\' tracking data, so it can\'t be deleted directly.\n\nForce delete will PERMANENTLY remove this step\'s records (dates, remarks, inspection status, worker/inspector assignments, any inspection sheet) from EVERY job that has it. This cannot be undone.\n\nForce delete anyway?';
+    if (!confirm(forceMsg)) return;
+
+    const { error: trackingError } = await supabaseClient.from('pr_fab_tracking').delete().eq('fab_step_id', id);
+    if (trackingError) { alert('Error force-deleting: ' + trackingError.message); return; }
+
+    const { error: retryError } = await supabaseClient.from('pr_fab_steps_master').delete().eq('id', id);
+    if (retryError) { alert('Error: ' + retryError.message); return; }
     loadFabSteps();
 }
 
@@ -422,9 +432,19 @@ async function saveProcessEdit(id, itemId, currentOrder) {
 }
 
 async function deletePaintProcess(id, name) {
-    if (!confirm('Delete paint process "' + name + '" permanently? If it is already used in any job\'s tracking, deletion will fail — use Deactivate instead in that case.')) return;
+    if (!confirm('Delete paint process "' + name + '" permanently?')) return;
     const { error } = await supabaseClient.from('pr_paint_process_master').delete().eq('id', id);
-    if (error) { alert('Error deleting: ' + error.message + '\n\nThis process is likely already used in one or more jobs. Use Deactivate instead.'); return; }
+    if (!error) { loadPaintProcesses(); return; }
+
+    const { count } = await supabaseClient.from('pr_paint_tracking').select('id', { count: 'exact', head: true }).eq('process_id', id);
+    const forceMsg = 'This process is used in ' + (count || 'some') + ' job(s)\' tracking data, so it can\'t be deleted directly.\n\nForce delete will PERMANENTLY remove this process\'s records (dates, remarks, any inspection sheet) from EVERY job that has it. This cannot be undone.\n\nForce delete anyway?';
+    if (!confirm(forceMsg)) return;
+
+    const { error: trackingError } = await supabaseClient.from('pr_paint_tracking').delete().eq('process_id', id);
+    if (trackingError) { alert('Error force-deleting: ' + trackingError.message); return; }
+
+    const { error: retryError } = await supabaseClient.from('pr_paint_process_master').delete().eq('id', id);
+    if (retryError) { alert('Error: ' + retryError.message); return; }
     loadPaintProcesses();
 }
 
@@ -776,9 +796,32 @@ async function deleteFormatTemplate(formatId) {
 }
 
 async function deleteInspectionFormat(id, code) {
-    if (!confirm('Delete inspection format "' + code + '" permanently? If it is already attached to a step or has an uploaded sheet, deletion will fail — use Deactivate instead in that case.')) return;
+    if (!confirm('Delete inspection format "' + code + '" permanently?')) return;
     const { error } = await supabaseClient.from('pr_inspection_formats_master').delete().eq('id', id);
-    if (error) { alert('Error deleting: ' + error.message + '\n\nThis format is likely still attached to a step or has an uploaded sheet. Use Deactivate instead.'); return; }
+    if (!error) { loadInspectionFormats(); return; }
+
+    const forceMsg = 'This format is attached to one or more steps and/or has inspection sheets already using it.\n\nForce delete will detach it from those steps and PERMANENTLY delete any inspection sheets (including uploaded files) and the master template that used it. This cannot be undone.\n\nForce delete anyway?';
+    if (!confirm(forceMsg)) return;
+
+    await supabaseClient.from('pr_fab_steps_master').update({ inspection_format_id: null }).eq('inspection_format_id', id);
+    await supabaseClient.from('pr_paint_process_master').update({ inspection_format_id: null }).eq('inspection_format_id', id);
+
+    const { data: reports } = await supabaseClient.from('pr_inspection_reports').select('id, file_path').eq('format_id', id);
+    const filePaths = (reports || []).filter(r => r.file_path).map(r => r.file_path);
+    if (filePaths.length > 0) {
+        await supabaseClient.storage.from('inspection-sheets').remove(filePaths);
+    }
+    if (reports && reports.length > 0) {
+        await supabaseClient.from('pr_inspection_reports').delete().eq('format_id', id);
+    }
+
+    const { data: fmt } = await supabaseClient.from('pr_inspection_formats_master').select('template_file_path').eq('id', id).maybeSingle();
+    if (fmt && fmt.template_file_path) {
+        await supabaseClient.storage.from('inspection-sheets').remove([fmt.template_file_path]);
+    }
+
+    const { error: retryError } = await supabaseClient.from('pr_inspection_formats_master').delete().eq('id', id);
+    if (retryError) { alert('Error: ' + retryError.message); return; }
     loadInspectionFormats();
 }
 
