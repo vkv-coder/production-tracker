@@ -702,7 +702,7 @@ async function loadInspectionFormats() {
     (data || []).forEach(f => {
         const jsCode = f.code.replace(/'/g, "\\'");
         html += '<tr><td>' + escapeHtml(f.code) + '</td><td>' + escapeHtml(f.name) + '</td>';
-        html += '<td>' + (f.template_file_path ? escapeHtml(f.template_file_name || 'attached') : '<span style="color:#d9534f;">not uploaded</span>') + '</td>';
+        html += '<td>' + (f.template_file_path ? '<a href="#" onclick="viewFormatTemplate(\'' + f.id + '\'); return false;" style="color:#1e3a5f; text-decoration:underline;">' + escapeHtml(f.template_file_name || 'view') + '</a>' : '<span style="color:#d9534f;">not uploaded</span>') + '</td>';
         html += '<td><span class="pr-badge pr-badge-' + (f.is_active ? 'accept' : 'reject') + '">' + (f.is_active ? 'Active' : 'Inactive') + '</span></td>';
         html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
         html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_inspection_formats_master\',\'' + f.id + '\',' + f.is_active + ',loadInspectionFormats)">' + (f.is_active ? 'Deactivate' : 'Activate') + '</button>';

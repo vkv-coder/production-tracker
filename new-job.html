@@ -58,18 +58,20 @@ async function attachTemplateToReport(jobId, formatId, sourceCol, trackingId, te
     const insertObj = { company_id: session.companyId, job_id: jobId, format_id: formatId };
     insertObj[sourceCol] = trackingId;
     const { data: report, error } = await supabaseClient.from('pr_inspection_reports').insert(insertObj).select('id').single();
-    if (error || !report) return;
+    if (error || !report) { console.error('Inspection sheet auto-attach: could not create report row', error); return false; }
 
     const destPath = session.companyId + '/' + report.id + '/' + templateInfo.template_file_name;
     const { error: copyError } = await supabaseClient.storage.from('inspection-sheets').copy(templateInfo.template_file_path, destPath);
-    if (copyError) return;
+    if (copyError) { console.error('Inspection sheet auto-attach: could not copy template file', copyError, 'from:', templateInfo.template_file_path, 'to:', destPath); return false; }
 
-    await supabaseClient.from('pr_inspection_reports').update({
+    const { error: updateError } = await supabaseClient.from('pr_inspection_reports').update({
         file_path: destPath,
         file_name: templateInfo.template_file_name,
         uploaded_by: 'Template (auto-attached)',
         uploaded_at: new Date().toISOString()
     }).eq('id', report.id);
+    if (updateError) { console.error('Inspection sheet auto-attach: could not update report row', updateError); return false; }
+    return true;
 }
 
 async function createJob() {
@@ -110,6 +112,7 @@ async function createJob() {
     }
 
     const jobId = jobData.id;
+    let templateAttachFailures = 0;
 
     // 2. Create blank Fab tracking rows for every Fab step in this company's master
     const { data: fabSteps } = await supabaseClient
@@ -131,7 +134,8 @@ async function createJob() {
             for (const row of insertedFab) {
                 const step = stepMap[row.fab_step_id];
                 if (step && step.inspection_format_id && step.pr_inspection_formats_master?.template_file_path) {
-                    await attachTemplateToReport(jobId, step.inspection_format_id, 'fab_tracking_id', row.id, step.pr_inspection_formats_master);
+                    const ok = await attachTemplateToReport(jobId, step.inspection_format_id, 'fab_tracking_id', row.id, step.pr_inspection_formats_master);
+                    if (!ok) templateAttachFailures++;
                 }
             }
         }
@@ -157,13 +161,14 @@ async function createJob() {
             for (const row of insertedPaint) {
                 const proc = processMap[row.process_id];
                 if (proc && proc.inspection_format_id && proc.pr_inspection_formats_master?.template_file_path) {
-                    await attachTemplateToReport(jobId, proc.inspection_format_id, 'paint_tracking_id', row.id, proc.pr_inspection_formats_master);
+                    const ok = await attachTemplateToReport(jobId, proc.inspection_format_id, 'paint_tracking_id', row.id, proc.pr_inspection_formats_master);
+                    if (!ok) templateAttachFailures++;
                 }
             }
         }
     }
 
-    successMsg.textContent = 'Job created! Redirecting...';
+    successMsg.textContent = 'Job created! Redirecting...' + (templateAttachFailures > 0 ? ' (' + templateAttachFailures + ' inspection sheet(s) could not be auto-attached — check that step\'s sheet manually.)' : '');
     successMsg.style.display = 'block';
 
     setTimeout(() => {
