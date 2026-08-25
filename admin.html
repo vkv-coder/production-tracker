@@ -531,8 +531,16 @@ async function loadJobsAdmin() {
 
     if (!data || data.length === 0) { container.innerHTML = '<p class="pr-empty">No jobs found.</p>'; return; }
 
-    let html = '';
+    let html = '<table class="pr-table"><tr><th>Job No.</th><th>Customer</th><th>Status</th><th></th></tr>';
     data.forEach(j => {
+        const jsJobNo = j.job_no.replace(/'/g, "\\'");
+        html += '<tr><td>' + escapeHtml(j.job_no) + '</td><td>' + escapeHtml(j.customer_name || '-') + '</td><td>' + escapeHtml(j.status || '-') + '</td>';
+        html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
+        html += '<button class="pr-btn pr-btn-outline" onclick="toggleJobEditRow(\'' + j.id + '\')">Edit</button>';
+        html += '<button class="pr-btn pr-btn-danger" onclick="deleteJob(\'' + j.id + '\',\'' + jsJobNo + '\')">Delete</button>';
+        html += '</td></tr>';
+
+        html += '<tr id="jobEditRow_' + j.id + '" style="display:none;"><td colspan="4">';
         html += '<div class="pr-card">';
         html += '<label class="pr-label">Job No.</label><input type="text" class="pr-input" id="jobNo_' + j.id + '" value="' + escapeHtml(j.job_no) + '">';
         html += '<label class="pr-label">Customer</label><input type="text" class="pr-input" id="jobCust_' + j.id + '" value="' + escapeHtml(j.customer_name || '') + '">';
@@ -549,10 +557,17 @@ async function loadJobsAdmin() {
         html += '</select>';
         html += '<div style="display:flex; gap:8px; margin-top:8px;">';
         html += '<button class="pr-btn pr-btn-primary" onclick="saveJobEdit(\'' + j.id + '\')">Save Changes</button>';
-        html += '<button class="pr-btn pr-btn-danger" onclick="deleteJob(\'' + j.id + '\',\'' + j.job_no.replace(/'/g, "\\'") + '\')">Delete Job</button>';
+        html += '<button class="pr-btn pr-btn-outline" onclick="toggleJobEditRow(\'' + j.id + '\')">Cancel</button>';
         html += '</div></div>';
+        html += '</td></tr>';
     });
+    html += '</table>';
     container.innerHTML = html;
+}
+
+function toggleJobEditRow(jobId) {
+    const row = document.getElementById('jobEditRow_' + jobId);
+    row.style.display = (row.style.display === 'none') ? 'table-row' : 'none';
 }
 
 async function saveJobEdit(jobId) {
