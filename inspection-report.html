@@ -154,12 +154,12 @@ function renderGrid() {
     }
     html += '</div>';
 
-    html += '<div style="overflow-x:auto; border:1px solid #ddd; border-radius:6px;">';
+    html += '<div style="overflow-x:auto; border:1px solid #888; border-radius:6px;">';
     html += '<table style="border-collapse:collapse; width:100%;">';
     gridData.forEach((row, r) => {
         html += '<tr>';
         row.forEach((cell, c) => {
-            html += '<td style="padding:0; border:1px solid #eee;"><input value="' + escapeHtml(cell) + '" onchange="updateCell(' + r + ',' + c + ',this.value)" style="border:none; padding:6px 8px; font-size:13px; width:110px; min-width:110px;"></td>';
+            html += '<td style="padding:0; border:1px solid #888;"><input value="' + escapeHtml(cell) + '" onchange="updateCell(' + r + ',' + c + ',this.value)" style="border:none; padding:6px 8px; font-size:13px; width:110px; min-width:110px;"></td>';
         });
         html += '</tr>';
     });
