@@ -37,6 +37,7 @@ let jobRecord = null;
 let report = null;
 let format = null;
 let gridData = [];
+let activeCell = null;
 
 function goBack() {
     window.location.href = 'job-detail.html?job=' + jobId;
@@ -154,8 +155,8 @@ function renderGrid() {
 
     html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">';
     html += '<button class="pr-btn pr-btn-primary" onclick="saveSheetGrid()">Save</button>';
-    html += '<button class="pr-btn pr-btn-outline" onclick="addRow()">+ Row</button>';
-    html += '<button class="pr-btn pr-btn-outline" onclick="addColumn()">+ Column</button>';
+    html += '<button class="pr-btn pr-btn-outline" onclick="addRow()">+ Row Above Cursor</button>';
+    html += '<button class="pr-btn pr-btn-outline" onclick="addColumn()">+ Column Before Cursor</button>';
     if (report.file_path) {
         html += '<button class="pr-btn pr-btn-outline" onclick="downloadSheet()">Download Copy</button>';
         html += '<button class="pr-btn pr-btn-danger" onclick="deleteSheet()">Clear Sheet</button>';
@@ -167,7 +168,7 @@ function renderGrid() {
     gridData.forEach((row, r) => {
         html += '<tr>';
         row.forEach((cell, c) => {
-            html += '<td style="padding:0; border:1px solid #888;"><input value="' + escapeHtml(cell) + '" onchange="updateCell(' + r + ',' + c + ',this.value)" style="border:none; padding:6px 8px; font-size:13px; width:110px; min-width:110px;"></td>';
+            html += '<td style="padding:0; border:1px solid #888;"><input value="' + escapeHtml(cell) + '" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" style="border:none; padding:6px 8px; font-size:13px; width:110px; min-width:110px;"></td>';
         });
         html += '</tr>';
     });
@@ -180,14 +181,20 @@ function updateCell(r, c, value) {
     gridData[r][c] = value;
 }
 
+function setActiveCell(r, c) {
+    activeCell = { r: r, c: c };
+}
+
 function addRow() {
     const cols = gridData.reduce((max, row) => Math.max(max, row.length), 6);
-    gridData.push(Array(cols).fill(''));
+    const insertAt = activeCell ? Math.min(activeCell.r, gridData.length) : gridData.length;
+    gridData.splice(insertAt, 0, Array(cols).fill(''));
     renderGrid();
 }
 
 function addColumn() {
-    gridData.forEach(row => row.push(''));
+    const insertAt = activeCell ? activeCell.c : (gridData[0] ? gridData[0].length : 0);
+    gridData.forEach(row => row.splice(insertAt, 0, ''));
     renderGrid();
 }
 
