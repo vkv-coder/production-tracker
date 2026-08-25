@@ -113,6 +113,7 @@ async function createJob() {
 
     const jobId = jobData.id;
     let templateAttachFailures = 0;
+    const warnings = [];
 
     // 2. Create blank Fab tracking rows for every Fab step in this company's master
     const { data: fabSteps } = await supabaseClient
@@ -127,7 +128,8 @@ async function createJob() {
             fab_step_id: s.id,
             inspection_status: 'Pending'
         }));
-        const { data: insertedFab } = await supabaseClient.from('pr_fab_tracking').insert(fabRows).select('id, fab_step_id');
+        const { data: insertedFab, error: fabInsertError } = await supabaseClient.from('pr_fab_tracking').insert(fabRows).select('id, fab_step_id');
+        if (fabInsertError) warnings.push('Fabrication steps: ' + fabInsertError.message);
         if (insertedFab) {
             const stepMap = {};
             fabSteps.forEach(s => { stepMap[s.id] = s; });
@@ -154,7 +156,8 @@ async function createJob() {
             paint_item_id: p.paint_item_id,
             process_id: p.id
         }));
-        const { data: insertedPaint } = await supabaseClient.from('pr_paint_tracking').insert(paintRows).select('id, process_id');
+        const { data: insertedPaint, error: paintInsertError } = await supabaseClient.from('pr_paint_tracking').insert(paintRows).select('id, process_id');
+        if (paintInsertError) warnings.push('Painting processes: ' + paintInsertError.message);
         if (insertedPaint) {
             const processMap = {};
             paintProcesses.forEach(p => { processMap[p.id] = p; });
@@ -168,12 +171,26 @@ async function createJob() {
         }
     }
 
-    successMsg.textContent = 'Job created! Redirecting...' + (templateAttachFailures > 0 ? ' (' + templateAttachFailures + ' inspection sheet(s) could not be auto-attached — check that step\'s sheet manually.)' : '');
+    if (templateAttachFailures > 0) warnings.push(templateAttachFailures + ' inspection sheet(s) could not be auto-attached (see console for details).');
+
+    if (warnings.length > 0) {
+        errorMsg.innerHTML = 'Job created, but with warnings:<br>' + warnings.map(w => escapeHtmlLocal(w)).join('<br>');
+        errorMsg.style.display = 'block';
+        successMsg.innerHTML = '<button class="pr-btn pr-btn-primary" onclick="window.location.href=\'job-detail.html?job=' + jobId + '\'">Continue to Job</button>';
+        successMsg.style.display = 'block';
+        return;
+    }
+
+    successMsg.textContent = 'Job created! Redirecting...';
     successMsg.style.display = 'block';
 
     setTimeout(() => {
         window.location.href = 'job-detail.html?job=' + jobId;
     }, 1200);
+}
+
+function escapeHtmlLocal(str) {
+    return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 if (session) loadUnits();
