@@ -678,20 +678,48 @@ async function loadInspectionFormats() {
     const { data, error } = await supabaseClient.from('pr_inspection_formats_master').select('*').eq('company_id', session.companyId).order('code');
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
-    let html = '<table class="pr-table"><tr><th>Code</th><th>Name</th><th>Status</th><th></th></tr>';
+    let html = '<table class="pr-table"><tr><th>Code</th><th>Name</th><th>Template</th><th>Status</th><th></th></tr>';
     (data || []).forEach(f => {
         const jsCode = f.code.replace(/'/g, "\\'");
-        const jsName = f.name.replace(/'/g, "\\'");
         html += '<tr><td>' + escapeHtml(f.code) + '</td><td>' + escapeHtml(f.name) + '</td>';
+        html += '<td>' + (f.template_file_path ? escapeHtml(f.template_file_name || 'attached') : '<span style="color:#d9534f;">not uploaded</span>') + '</td>';
         html += '<td><span class="pr-badge pr-badge-' + (f.is_active ? 'accept' : 'reject') + '">' + (f.is_active ? 'Active' : 'Inactive') + '</span></td>';
         html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
         html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_inspection_formats_master\',\'' + f.id + '\',' + f.is_active + ',loadInspectionFormats)">' + (f.is_active ? 'Deactivate' : 'Activate') + '</button>';
-        html += '<button class="pr-btn pr-btn-outline" onclick="editInspectionFormat(\'' + f.id + '\',\'' + jsCode + '\',\'' + jsName + '\')">Edit</button>';
+        html += '<button class="pr-btn pr-btn-outline" onclick="toggleFormatEditRow(\'' + f.id + '\')">Edit</button>';
         html += '<button class="pr-btn pr-btn-danger" onclick="deleteInspectionFormat(\'' + f.id + '\',\'' + jsCode + '\')">Delete</button>';
+        html += '</td></tr>';
+
+        html += '<tr id="formatEditRow_' + f.id + '" style="display:none;"><td colspan="5">';
+        html += '<div class="pr-card">';
+        html += '<label class="pr-label">Code</label><input type="text" class="pr-input" id="formatCode_' + f.id + '" value="' + escapeHtml(f.code) + '">';
+        html += '<label class="pr-label">Name</label><input type="text" class="pr-input" id="formatName_' + f.id + '" value="' + escapeHtml(f.name) + '">';
+        html += '<div style="display:flex; gap:8px; margin-top:8px;">';
+        html += '<button class="pr-btn pr-btn-primary" onclick="saveFormatEdit(\'' + f.id + '\')">Save Changes</button>';
+        html += '<button class="pr-btn pr-btn-outline" onclick="toggleFormatEditRow(\'' + f.id + '\')">Cancel</button>';
+        html += '</div>';
+        html += '<hr style="margin:14px 0; border:none; border-top:1px solid #ddd;">';
+        html += '<label class="pr-label">Master Template Sheet</label>';
+        if (f.template_file_path) {
+            html += '<p style="font-size:14px; margin:4px 0;">' + escapeHtml(f.template_file_name || 'file') + '</p>';
+            html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">';
+            html += '<button class="pr-btn pr-btn-outline" onclick="viewFormatTemplate(\'' + f.id + '\')">View / Verify</button>';
+            html += '<button class="pr-btn pr-btn-danger" onclick="deleteFormatTemplate(\'' + f.id + '\')">Remove Template</button>';
+            html += '</div>';
+            html += '<label class="pr-label">Replace Template</label>';
+        }
+        html += '<input type="file" class="pr-input" id="formatTemplateInput_' + f.id + '">';
+        html += '<button class="pr-btn pr-btn-primary" style="margin-top:8px;" onclick="uploadFormatTemplate(\'' + f.id + '\')">' + (f.template_file_path ? 'Upload Replacement' : 'Upload Template') + '</button>';
+        html += '</div>';
         html += '</td></tr>';
     });
     html += '</table>';
     container.innerHTML = html;
+}
+
+function toggleFormatEditRow(id) {
+    const row = document.getElementById('formatEditRow_' + id);
+    row.style.display = (row.style.display === 'none') ? 'table-row' : 'none';
 }
 
 async function addInspectionFormat() {
@@ -705,14 +733,44 @@ async function addInspectionFormat() {
     loadInspectionFormats();
 }
 
-async function editInspectionFormat(id, currentCode, currentName) {
-    const newCode = prompt('Format code:', currentCode);
-    if (newCode === null) return;
-    if (!newCode.trim()) { alert('Invalid code'); return; }
-    const newName = prompt('Format name:', currentName);
-    if (newName === null) return;
-    if (!newName.trim()) { alert('Invalid name'); return; }
-    const { error } = await supabaseClient.from('pr_inspection_formats_master').update({ code: newCode.trim(), name: newName.trim() }).eq('id', id);
+async function saveFormatEdit(id) {
+    const newCode = document.getElementById('formatCode_' + id).value.trim();
+    const newName = document.getElementById('formatName_' + id).value.trim();
+    if (!newCode || !newName) { alert('Invalid code or name'); return; }
+    const { error } = await supabaseClient.from('pr_inspection_formats_master').update({ code: newCode, name: newName }).eq('id', id);
+    if (error) { alert('Error: ' + error.message); return; }
+    loadInspectionFormats();
+}
+
+async function uploadFormatTemplate(formatId) {
+    const fileInput = document.getElementById('formatTemplateInput_' + formatId);
+    const file = fileInput.files[0];
+    if (!file) { alert('Choose a file first'); return; }
+
+    const path = session.companyId + '/templates/' + formatId + '/' + file.name;
+    const { error: uploadError } = await supabaseClient.storage.from('inspection-sheets').upload(path, file, { upsert: true });
+    if (uploadError) { alert('Error uploading: ' + uploadError.message); return; }
+
+    const { error } = await supabaseClient.from('pr_inspection_formats_master').update({ template_file_path: path, template_file_name: file.name }).eq('id', formatId);
+    if (error) { alert('Error saving: ' + error.message); return; }
+    loadInspectionFormats();
+}
+
+async function viewFormatTemplate(formatId) {
+    const { data: fmt } = await supabaseClient.from('pr_inspection_formats_master').select('template_file_path').eq('id', formatId).maybeSingle();
+    if (!fmt || !fmt.template_file_path) { alert('No template uploaded'); return; }
+    const { data, error } = await supabaseClient.storage.from('inspection-sheets').createSignedUrl(fmt.template_file_path, 300);
+    if (error) { alert('Error: ' + error.message); return; }
+    window.open(data.signedUrl, '_blank');
+}
+
+async function deleteFormatTemplate(formatId) {
+    if (!confirm('Remove the master template for this format? Jobs already created will keep their own copy; only future new jobs are affected.')) return;
+    const { data: fmt } = await supabaseClient.from('pr_inspection_formats_master').select('template_file_path').eq('id', formatId).maybeSingle();
+    if (fmt && fmt.template_file_path) {
+        await supabaseClient.storage.from('inspection-sheets').remove([fmt.template_file_path]);
+    }
+    const { error } = await supabaseClient.from('pr_inspection_formats_master').update({ template_file_path: null, template_file_name: null }).eq('id', formatId);
     if (error) { alert('Error: ' + error.message); return; }
     loadInspectionFormats();
 }

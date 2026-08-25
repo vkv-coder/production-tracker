@@ -54,6 +54,24 @@ async function loadUnits() {
     });
 }
 
+async function attachTemplateToReport(jobId, formatId, sourceCol, trackingId, templateInfo) {
+    const insertObj = { company_id: session.companyId, job_id: jobId, format_id: formatId };
+    insertObj[sourceCol] = trackingId;
+    const { data: report, error } = await supabaseClient.from('pr_inspection_reports').insert(insertObj).select('id').single();
+    if (error || !report) return;
+
+    const destPath = session.companyId + '/' + report.id + '/' + templateInfo.template_file_name;
+    const { error: copyError } = await supabaseClient.storage.from('inspection-sheets').copy(templateInfo.template_file_path, destPath);
+    if (copyError) return;
+
+    await supabaseClient.from('pr_inspection_reports').update({
+        file_path: destPath,
+        file_name: templateInfo.template_file_name,
+        uploaded_by: 'Template (auto-attached)',
+        uploaded_at: new Date().toISOString()
+    }).eq('id', report.id);
+}
+
 async function createJob() {
     const errorMsg = document.getElementById('errorMsg');
     const successMsg = document.getElementById('successMsg');
@@ -96,7 +114,7 @@ async function createJob() {
     // 2. Create blank Fab tracking rows for every Fab step in this company's master
     const { data: fabSteps } = await supabaseClient
         .from('pr_fab_steps_master')
-        .select('id')
+        .select('id, inspection_format_id, pr_inspection_formats_master(template_file_path, template_file_name)')
         .eq('company_id', session.companyId)
         .eq('is_active', true);
 
@@ -106,13 +124,23 @@ async function createJob() {
             fab_step_id: s.id,
             inspection_status: 'Pending'
         }));
-        await supabaseClient.from('pr_fab_tracking').insert(fabRows);
+        const { data: insertedFab } = await supabaseClient.from('pr_fab_tracking').insert(fabRows).select('id, fab_step_id');
+        if (insertedFab) {
+            const stepMap = {};
+            fabSteps.forEach(s => { stepMap[s.id] = s; });
+            for (const row of insertedFab) {
+                const step = stepMap[row.fab_step_id];
+                if (step && step.inspection_format_id && step.pr_inspection_formats_master?.template_file_path) {
+                    await attachTemplateToReport(jobId, step.inspection_format_id, 'fab_tracking_id', row.id, step.pr_inspection_formats_master);
+                }
+            }
+        }
     }
 
     // 3. Create blank Paint tracking rows for every process, under every paint item
     const { data: paintProcesses } = await supabaseClient
         .from('pr_paint_process_master')
-        .select('id, paint_item_id')
+        .select('id, paint_item_id, inspection_format_id, pr_inspection_formats_master(template_file_path, template_file_name)')
         .eq('company_id', session.companyId)
         .eq('is_active', true);
 
@@ -122,7 +150,17 @@ async function createJob() {
             paint_item_id: p.paint_item_id,
             process_id: p.id
         }));
-        await supabaseClient.from('pr_paint_tracking').insert(paintRows);
+        const { data: insertedPaint } = await supabaseClient.from('pr_paint_tracking').insert(paintRows).select('id, process_id');
+        if (insertedPaint) {
+            const processMap = {};
+            paintProcesses.forEach(p => { processMap[p.id] = p; });
+            for (const row of insertedPaint) {
+                const proc = processMap[row.process_id];
+                if (proc && proc.inspection_format_id && proc.pr_inspection_formats_master?.template_file_path) {
+                    await attachTemplateToReport(jobId, proc.inspection_format_id, 'paint_tracking_id', row.id, proc.pr_inspection_formats_master);
+                }
+            }
+        }
     }
 
     successMsg.textContent = 'Job created! Redirecting...';
