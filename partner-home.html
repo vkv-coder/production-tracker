@@ -59,12 +59,25 @@ async function loadAssignedSteps() {
         return;
     }
 
+    // Gate sheet visibility on whether each job has actually started
+    // (Actual Start filled on that job's first fab step) - bypasses our
+    // own assignment-scoped RLS via a SECURITY DEFINER RPC.
+    const distinctJobIds = [...new Set(items.map(i => i.jobId).filter(Boolean))];
+    const startedMap = {};
+    await Promise.all(distinctJobIds.map(async jobId => {
+        const { data } = await supabaseClient.rpc('pr_job_has_started', { p_job_id: jobId });
+        startedMap[jobId] = !!data;
+    }));
+
     let html = '';
     items.forEach(item => {
+        const started = startedMap[item.jobId];
         html += '<div class="pr-card">';
         html += '<div class="pr-card-title">' + (item.job ? escapeHtml(item.job.job_no) : 'Job') + (item.job && item.job.customer_name ? ' - ' + escapeHtml(item.job.customer_name) : '') + '</div>';
         html += '<div class="pr-card-sub">' + (item.job ? escapeHtml(item.job.status || '') + ' &middot; ' : '') + (item.order != null ? item.order + '. ' : '') + escapeHtml(item.stepName || '') + '</div>';
-        if (item.formatId) {
+        if (!started) {
+            html += '<p class="pr-empty" style="margin:6px 0 0;">This job hasn\'t started yet - sheet will appear here once it does.</p>';
+        } else if (item.formatId) {
             const param = item.type === 'fab' ? 'fab_tracking' : 'paint_tracking';
             html += '<a class="pr-btn pr-btn-outline" style="margin-top:8px; display:inline-block;" href="inspection-report.html?' + param + '=' + item.trackingId + '&job=' + item.jobId + '">&#128206; ' + escapeHtml(item.formatCode || 'Inspection') + ' Inspection Sheet</a>';
         } else {
