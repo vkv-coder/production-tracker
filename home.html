@@ -169,7 +169,7 @@ async function loadToday() {
     relevant.forEach(r => {
         const isOverdue = (r.planned_start && r.planned_start < today && !r.actual_start) || (r.planned_end && r.planned_end < today && !r.actual_end);
         html += '<div class="pr-card" style="' + (isOverdue ? 'background:#f8d7da; border:1px solid #d9534f;' : '') + '">';
-        html += '<div class="pr-card-title">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + (r.pr_jobs && r.pr_jobs.pr_units ? ' [' + r.pr_jobs.pr_units.unit_name + ']' : '') + '</div>';
+        html += '<div class="pr-card-title" style="cursor:pointer; text-decoration:underline;" onclick="window.location.href=\'job-detail.html?job=' + r.job_id + '\'">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + (r.pr_jobs && r.pr_jobs.pr_units ? ' [' + r.pr_jobs.pr_units.unit_name + ']' : '') + '</div>';
         html += '<div class="pr-card-sub">' + (r.pr_fab_steps_master ? (r.pr_fab_steps_master.step_order != null ? r.pr_fab_steps_master.step_order + '. ' : '') + r.pr_fab_steps_master.step_name : '') + '</div>';
         html += '<div style="font-size:12px; color:' + (isOverdue ? '#a00' : '#666') + ';">Planned: ' + (r.planned_start || '-') + ' to ' + (r.planned_end || '-') + (isOverdue ? ' &mdash; OVERDUE' : '') + '</div>';
         html += '<div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">';
@@ -220,7 +220,7 @@ async function loadTodayPainting() {
     let html = '';
     relevant.forEach(r => {
         html += '<div class="pr-card">';
-        html += '<div class="pr-card-title">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + (r.pr_jobs && r.pr_jobs.pr_units ? ' [' + r.pr_jobs.pr_units.unit_name + ']' : '') + '</div>';
+        html += '<div class="pr-card-title" style="cursor:pointer; text-decoration:underline;" onclick="window.location.href=\'job-detail.html?job=' + r.job_id + '\'">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + (r.pr_jobs && r.pr_jobs.pr_units ? ' [' + r.pr_jobs.pr_units.unit_name + ']' : '') + '</div>';
         html += '<div class="pr-card-sub">' + (r.pr_paint_items_master ? r.pr_paint_items_master.item_name : '') + ' - ' + (r.pr_paint_process_master ? r.pr_paint_process_master.process_name : '') + '</div>';
         html += '<div style="font-size:12px; color:#666;">Started: ' + (r.start_time || '-') + '</div>';
         html += '<div style="margin-top:8px; display:flex; gap:8px; align-items:center;">';
@@ -273,7 +273,7 @@ async function loadTomorrow() {
     let html = '';
     relevant.forEach(r => {
         html += '<div class="pr-card">';
-        html += '<div class="pr-card-title">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + (r.pr_jobs && r.pr_jobs.pr_units ? ' [' + r.pr_jobs.pr_units.unit_name + ']' : '') + '</div>';
+        html += '<div class="pr-card-title" style="cursor:pointer; text-decoration:underline;" onclick="window.location.href=\'job-detail.html?job=' + r.job_id + '\'">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + (r.pr_jobs && r.pr_jobs.pr_units ? ' [' + r.pr_jobs.pr_units.unit_name + ']' : '') + '</div>';
         html += '<div class="pr-card-sub">' + (r.pr_fab_steps_master ? r.pr_fab_steps_master.step_name : '') + '</div>';
         html += '<div style="font-size:12px; color:#666;">Planned: ' + (r.planned_start || '-') + ' to ' + (r.planned_end || '-') + '</div>';
         html += '</div>';
@@ -327,7 +327,7 @@ async function loadWeek() {
         const refDate = r.planned_end || r.planned_start;
         const daysLate = delayed && refDate ? Math.round((new Date(today) - new Date(refDate)) / 86400000) : null;
         html += '<div class="pr-card" style="' + (delayed ? 'background:#f8d7da; border:1px solid #d9534f;' : '') + '">';
-        html += '<div class="pr-card-title">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + (r.pr_jobs && r.pr_jobs.pr_units ? ' [' + r.pr_jobs.pr_units.unit_name + ']' : '') + (delayed ? ' <span style="color:#dc3545; font-size:12px;">&#9888; LATE</span>' : '') + '</div>';
+        html += '<div class="pr-card-title" style="cursor:pointer; text-decoration:underline;" onclick="window.location.href=\'job-detail.html?job=' + r.job_id + '\'">' + (r.pr_jobs ? r.pr_jobs.job_no : '') + (r.pr_jobs && r.pr_jobs.pr_units ? ' [' + r.pr_jobs.pr_units.unit_name + ']' : '') + (delayed ? ' <span style="color:#dc3545; font-size:12px;">&#9888; LATE</span>' : '') + '</div>';
         html += '<div class="pr-card-sub">' + (r.pr_fab_steps_master ? (r.pr_fab_steps_master.step_order != null ? r.pr_fab_steps_master.step_order + '. ' : '') + r.pr_fab_steps_master.step_name : '') + '</div>';
         html += '<div style="font-size:12px; color:' + (delayed ? '#a00' : '#666') + ';">Planned: ' + (r.planned_start || '-') + ' to ' + (r.planned_end || '-') + (r.actual_start ? ' &middot; Actual Start: ' + r.actual_start : '') + '</div>';
         if (delayed && daysLate != null && daysLate > 0) {
