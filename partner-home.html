@@ -41,13 +41,13 @@ async function loadAssignedSteps() {
 
     const [{ data: fabAssignments }, { data: paintAssignments }] = await Promise.all([
         supabaseClient
-            .from('pr_fab_tracking_workers')
+            .from('pr_fab_tracking_inspectors')
             .select('pr_fab_tracking(id, job_id, pr_jobs(job_no, customer_name, status), pr_fab_steps_master(step_name, step_order, inspection_format_id, pr_inspection_formats_master(code)))')
-            .eq('worker_id', session.userId),
+            .eq('inspector_id', session.userId),
         supabaseClient
-            .from('pr_paint_tracking_workers')
+            .from('pr_paint_tracking_inspectors')
             .select('pr_paint_tracking(id, job_id, pr_jobs(job_no, customer_name, status), pr_paint_process_master(process_name, process_order, inspection_format_id, pr_inspection_formats_master(code)))')
-            .eq('worker_id', session.userId)
+            .eq('inspector_id', session.userId)
     ]);
 
     const items = [];

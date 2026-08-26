@@ -74,6 +74,7 @@
         <div class="pr-card">
             <label class="pr-label">Add Inspector</label>
             <input type="text" id="newInspectorName" class="pr-input" placeholder="Inspector name">
+            <input type="email" id="newInspectorEmail" class="pr-input" placeholder="Email (optional - enables Partner login)">
             <button class="pr-btn pr-btn-primary" onclick="addInspector()">Add Inspector</button>
         </div>
         <div id="inspectorsList"><p class="pr-empty">Loading...</p></div>
@@ -85,7 +86,6 @@
             <label class="pr-label">Add Worker</label>
             <input type="text" id="newWorkerName" class="pr-input" placeholder="Worker name">
             <input type="text" id="newWorkerCategory" class="pr-input" placeholder="Category (e.g. Welder, Plasma Operator)">
-            <input type="email" id="newWorkerEmail" class="pr-input" placeholder="Email (optional - enables Partner login)">
             <button class="pr-btn pr-btn-primary" onclick="addWorker()">Add Worker</button>
         </div>
         <div id="workersMasterList"><p class="pr-empty">Loading...</p></div>
@@ -532,14 +532,15 @@ async function loadInspectors() {
     const { data, error } = await supabaseClient.from('pr_inspectors').select('*').eq('company_id', session.companyId).order('inspector_name');
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
-    let html = '<table class="pr-table"><tr><th>Name</th><th>Status</th><th></th></tr>';
+    let html = '<table class="pr-table"><tr><th>Name</th><th>Email</th><th>Status</th><th></th></tr>';
     (data || []).forEach(i => {
         const jsName = i.inspector_name.replace(/'/g, "\\'");
         html += '<tr><td>' + escapeHtml(i.inspector_name) + '</td>';
+        html += '<td>' + escapeHtml(i.email || '-') + (i.auth_user_id ? ' <span class="pr-badge pr-badge-accept">Partner</span>' : '') + '</td>';
         html += '<td><span class="pr-badge pr-badge-' + (i.is_active ? 'accept' : 'reject') + '">' + (i.is_active ? 'Active' : 'Inactive') + '</span></td>';
         html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
         html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_inspectors\',\'' + i.id + '\',' + i.is_active + ',loadInspectors)">' + (i.is_active ? 'Deactivate' : 'Activate') + '</button>';
-        html += '<button class="pr-btn pr-btn-outline" onclick="editInspector(\'' + i.id + '\',\'' + jsName + '\')">Edit</button>';
+        html += '<button class="pr-btn pr-btn-outline" onclick="editInspector(\'' + i.id + '\',\'' + jsName + '\',\'' + (i.email || '').replace(/'/g, "\\'") + '\')">Edit</button>';
         html += '<button class="pr-btn pr-btn-danger" onclick="deleteInspector(\'' + i.id + '\',\'' + jsName + '\')">Delete</button>';
         html += '</td></tr>';
     });
@@ -549,18 +550,22 @@ async function loadInspectors() {
 
 async function addInspector() {
     const name = document.getElementById('newInspectorName').value.trim();
+    const email = document.getElementById('newInspectorEmail').value.trim();
     if (!name) { alert('Enter inspector name'); return; }
-    const { error } = await supabaseClient.from('pr_inspectors').insert({ company_id: session.companyId, inspector_name: name });
+    const { error } = await supabaseClient.from('pr_inspectors').insert({ company_id: session.companyId, inspector_name: name, email: email || null });
     if (error) { alert('Error: ' + error.message); return; }
     document.getElementById('newInspectorName').value = '';
+    document.getElementById('newInspectorEmail').value = '';
     loadInspectors();
 }
 
-async function editInspector(id, currentName) {
+async function editInspector(id, currentName, currentEmail) {
     const newName = prompt('Inspector name:', currentName);
     if (newName === null) return;
     if (!newName.trim()) { alert('Invalid name'); return; }
-    const { error } = await supabaseClient.from('pr_inspectors').update({ inspector_name: newName.trim() }).eq('id', id);
+    const newEmail = prompt('Email (leave blank for no Partner login):', currentEmail);
+    if (newEmail === null) return;
+    const { error } = await supabaseClient.from('pr_inspectors').update({ inspector_name: newName.trim(), email: newEmail.trim() || null }).eq('id', id);
     if (error) { alert('Error: ' + error.message); return; }
     loadInspectors();
 }
@@ -579,16 +584,15 @@ async function loadWorkersMaster() {
     const { data, error } = await supabaseClient.from('pr_workers').select('*').eq('company_id', session.companyId).order('worker_name');
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
-    let html = '<table class="pr-table"><tr><th>Name</th><th>Category</th><th>Email</th><th>Status</th><th></th></tr>';
+    let html = '<table class="pr-table"><tr><th>Name</th><th>Category</th><th>Status</th><th></th></tr>';
     (data || []).forEach(w => {
         const jsName = w.worker_name.replace(/'/g, "\\'");
         html += '<tr><td>' + escapeHtml(w.worker_name) + '</td>';
         html += '<td>' + escapeHtml(w.category || '-') + '</td>';
-        html += '<td>' + escapeHtml(w.email || '-') + (w.auth_user_id ? ' <span class="pr-badge pr-badge-accept">Partner</span>' : '') + '</td>';
         html += '<td><span class="pr-badge pr-badge-' + (w.is_active ? 'accept' : 'reject') + '">' + (w.is_active ? 'Active' : 'Inactive') + '</span></td>';
         html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
         html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_workers\',\'' + w.id + '\',' + w.is_active + ',loadWorkersMaster)">' + (w.is_active ? 'Deactivate' : 'Activate') + '</button>';
-        html += '<button class="pr-btn pr-btn-outline" onclick="editWorker(\'' + w.id + '\',\'' + jsName + '\',\'' + (w.category || '').replace(/'/g, "\\'") + '\',\'' + (w.email || '').replace(/'/g, "\\'") + '\')">Edit</button>';
+        html += '<button class="pr-btn pr-btn-outline" onclick="editWorker(\'' + w.id + '\',\'' + jsName + '\',\'' + (w.category || '').replace(/'/g, "\\'") + '\')">Edit</button>';
         html += '<button class="pr-btn pr-btn-danger" onclick="deleteWorker(\'' + w.id + '\',\'' + jsName + '\')">Delete</button>';
         html += '</td></tr>';
     });
@@ -599,25 +603,21 @@ async function loadWorkersMaster() {
 async function addWorker() {
     const name = document.getElementById('newWorkerName').value.trim();
     const category = document.getElementById('newWorkerCategory').value.trim();
-    const email = document.getElementById('newWorkerEmail').value.trim();
     if (!name) { alert('Enter worker name'); return; }
-    const { error } = await supabaseClient.from('pr_workers').insert({ company_id: session.companyId, worker_name: name, category: category || null, email: email || null });
+    const { error } = await supabaseClient.from('pr_workers').insert({ company_id: session.companyId, worker_name: name, category: category || null });
     if (error) { alert('Error: ' + error.message); return; }
     document.getElementById('newWorkerName').value = '';
     document.getElementById('newWorkerCategory').value = '';
-    document.getElementById('newWorkerEmail').value = '';
     loadWorkersMaster();
 }
 
-async function editWorker(id, currentName, currentCategory, currentEmail) {
+async function editWorker(id, currentName, currentCategory) {
     const newName = prompt('Worker name:', currentName);
     if (newName === null) return;
     if (!newName.trim()) { alert('Invalid name'); return; }
     const newCategory = prompt('Category:', currentCategory);
     if (newCategory === null) return;
-    const newEmail = prompt('Email (leave blank for no Partner login):', currentEmail);
-    if (newEmail === null) return;
-    const { error } = await supabaseClient.from('pr_workers').update({ worker_name: newName.trim(), category: newCategory.trim() || null, email: newEmail.trim() || null }).eq('id', id);
+    const { error } = await supabaseClient.from('pr_workers').update({ worker_name: newName.trim(), category: newCategory.trim() || null }).eq('id', id);
     if (error) { alert('Error: ' + error.message); return; }
     loadWorkersMaster();
 }
