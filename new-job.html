@@ -118,7 +118,7 @@ async function createJob() {
     // 2. Create blank Fab tracking rows for every Fab step in this company's master
     const { data: fabSteps } = await supabaseClient
         .from('pr_fab_steps_master')
-        .select('id, inspection_format_id, pr_inspection_formats_master(template_file_path, template_file_name)')
+        .select('id, inspection_format_id, pr_inspection_formats_master(template_file_path, template_file_name), pr_fab_step_default_inspectors(inspector_id)')
         .eq('company_id', session.companyId)
         .eq('is_active', true);
 
@@ -139,6 +139,13 @@ async function createJob() {
                     const ok = await attachTemplateToReport(jobId, step.inspection_format_id, 'fab_tracking_id', row.id, step.pr_inspection_formats_master);
                     if (!ok) templateAttachFailures++;
                 }
+                const defaultInspectors = step?.pr_fab_step_default_inspectors || [];
+                if (defaultInspectors.length > 0) {
+                    const { error: inspInsertError } = await supabaseClient.from('pr_fab_tracking_inspectors').insert(
+                        defaultInspectors.map(di => ({ fab_tracking_id: row.id, inspector_id: di.inspector_id }))
+                    );
+                    if (inspInsertError) warnings.push('Default inspector assignment: ' + inspInsertError.message);
+                }
             }
         }
     }
@@ -146,7 +153,7 @@ async function createJob() {
     // 3. Create blank Paint tracking rows for every process, under every paint item
     const { data: paintProcesses } = await supabaseClient
         .from('pr_paint_process_master')
-        .select('id, paint_item_id, inspection_format_id, pr_inspection_formats_master(template_file_path, template_file_name)')
+        .select('id, paint_item_id, inspection_format_id, pr_inspection_formats_master(template_file_path, template_file_name), pr_paint_process_default_inspectors(inspector_id)')
         .eq('company_id', session.companyId)
         .eq('is_active', true);
 
@@ -166,6 +173,13 @@ async function createJob() {
                 if (proc && proc.inspection_format_id && proc.pr_inspection_formats_master?.template_file_path) {
                     const ok = await attachTemplateToReport(jobId, proc.inspection_format_id, 'paint_tracking_id', row.id, proc.pr_inspection_formats_master);
                     if (!ok) templateAttachFailures++;
+                }
+                const defaultInspectors = proc?.pr_paint_process_default_inspectors || [];
+                if (defaultInspectors.length > 0) {
+                    const { error: inspInsertError } = await supabaseClient.from('pr_paint_tracking_inspectors').insert(
+                        defaultInspectors.map(di => ({ paint_tracking_id: row.id, inspector_id: di.inspector_id }))
+                    );
+                    if (inspInsertError) warnings.push('Default inspector assignment: ' + inspInsertError.message);
                 }
             }
         }

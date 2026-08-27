@@ -141,6 +141,32 @@ async function fetchActiveFormats() {
     return data || [];
 }
 
+async function fetchActiveInspectors() {
+    const { data } = await supabaseClient.from('pr_inspectors').select('id, inspector_name').eq('company_id', session.companyId).eq('is_active', true).order('inspector_name');
+    return data || [];
+}
+
+function renderDefaultInspectorPicker(assignedInsp, availableInsp, toggleFnName, entityId) {
+    let html = '<label class="pr-label" style="margin-top:8px;">Default Inspectors (auto-assigned to every new job)</label>';
+    html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 6px;">';
+    if (assignedInsp.length === 0) {
+        html += '<span style="font-size:12px; color:#999;">None</span>';
+    }
+    assignedInsp.forEach(i => {
+        html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' + escapeHtml(i.inspector_name) + '<span style="cursor:pointer; font-weight:bold;" onclick="' + toggleFnName + '(\'' + entityId + '\',\'' + i.id + '\',false)">&times;</span></span>';
+    });
+    html += '</div>';
+    if (availableInsp.length > 0) {
+        html += '<select class="pr-select" onchange="if(this.value){' + toggleFnName + '(\'' + entityId + '\',this.value,true);}">';
+        html += '<option value="">-- Add default inspector --</option>';
+        availableInsp.forEach(i => {
+            html += '<option value="' + i.id + '">' + escapeHtml(i.inspector_name) + '</option>';
+        });
+        html += '</select>';
+    }
+    return html;
+}
+
 function populateFormatSelect(selectEl, formats, currentFormatId) {
     selectEl.innerHTML = '<option value="">-- No inspection format --</option>';
     formats.forEach(f => {
@@ -156,9 +182,10 @@ function populateFormatSelect(selectEl, formats, currentFormatId) {
 async function loadFabSteps() {
     const container = document.getElementById('fabStepsList');
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
-    const [{ data, error }, formats] = await Promise.all([
-        supabaseClient.from('pr_fab_steps_master').select('*, pr_inspection_formats_master(code, name)').eq('company_id', session.companyId).order('step_order'),
-        fetchActiveFormats()
+    const [{ data, error }, formats, inspectors] = await Promise.all([
+        supabaseClient.from('pr_fab_steps_master').select('*, pr_inspection_formats_master(code, name), pr_fab_step_default_inspectors(inspector_id)').eq('company_id', session.companyId).order('step_order'),
+        fetchActiveFormats(),
+        fetchActiveInspectors()
     ]);
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
@@ -181,6 +208,12 @@ async function loadFabSteps() {
         html += '<label class="pr-label">Step Name</label><input type="text" class="pr-input" id="fabStepName_' + s.id + '" value="' + escapeHtml(s.step_name) + '">';
         html += '<label class="pr-label">Order Number</label><input type="number" class="pr-input" id="fabStepOrder_' + s.id + '" value="' + s.step_order + '">';
         html += '<label class="pr-label">Inspection Format</label><select class="pr-select" id="fabStepFormat_' + s.id + '"></select>';
+        const fabDefaultInspSet = new Set((s.pr_fab_step_default_inspectors || []).map(x => x.inspector_id));
+        html += renderDefaultInspectorPicker(
+            inspectors.filter(i => fabDefaultInspSet.has(i.id)),
+            inspectors.filter(i => !fabDefaultInspSet.has(i.id)),
+            'toggleFabStepDefaultInspector', s.id
+        );
         html += '<div style="display:flex; gap:8px; margin-top:8px;">';
         html += '<button class="pr-btn pr-btn-primary" onclick="saveFabStepEdit(\'' + s.id + '\',' + s.step_order + ')">Save Changes</button>';
         html += '<button class="pr-btn pr-btn-outline" onclick="toggleFabStepEditRow(\'' + s.id + '\')">Cancel</button>';
@@ -198,6 +231,17 @@ async function loadFabSteps() {
 function toggleFabStepEditRow(id) {
     const row = document.getElementById('fabStepEditRow_' + id);
     row.style.display = (row.style.display === 'none') ? 'table-row' : 'none';
+}
+
+async function toggleFabStepDefaultInspector(fabStepId, inspectorId, checked) {
+    if (checked) {
+        const { error } = await supabaseClient.from('pr_fab_step_default_inspectors').insert({ fab_step_id: fabStepId, inspector_id: inspectorId });
+        if (error) { alert('Error: ' + error.message); return; }
+    } else {
+        const { error } = await supabaseClient.from('pr_fab_step_default_inspectors').delete().eq('fab_step_id', fabStepId).eq('inspector_id', inspectorId);
+        if (error) { alert('Error: ' + error.message); return; }
+    }
+    loadFabSteps();
 }
 
 async function saveFabStepEdit(id, currentOrder) {
@@ -349,9 +393,10 @@ async function loadPaintProcesses() {
     if (!itemId) { container.innerHTML = ''; return; }
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
 
-    const [{ data, error }, formats] = await Promise.all([
-        supabaseClient.from('pr_paint_process_master').select('*, pr_inspection_formats_master(code, name)').eq('paint_item_id', itemId).order('process_order'),
-        fetchActiveFormats()
+    const [{ data, error }, formats, inspectors] = await Promise.all([
+        supabaseClient.from('pr_paint_process_master').select('*, pr_inspection_formats_master(code, name), pr_paint_process_default_inspectors(inspector_id)').eq('paint_item_id', itemId).order('process_order'),
+        fetchActiveFormats(),
+        fetchActiveInspectors()
     ]);
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
@@ -374,6 +419,12 @@ async function loadPaintProcesses() {
         html += '<label class="pr-label">Process Name</label><input type="text" class="pr-input" id="processName_' + p.id + '" value="' + escapeHtml(p.process_name) + '">';
         html += '<label class="pr-label">Order Number</label><input type="number" class="pr-input" id="processOrder_' + p.id + '" value="' + p.process_order + '">';
         html += '<label class="pr-label">Inspection Format</label><select class="pr-select" id="processFormat_' + p.id + '"></select>';
+        const paintDefaultInspSet = new Set((p.pr_paint_process_default_inspectors || []).map(x => x.inspector_id));
+        html += renderDefaultInspectorPicker(
+            inspectors.filter(i => paintDefaultInspSet.has(i.id)),
+            inspectors.filter(i => !paintDefaultInspSet.has(i.id)),
+            'toggleProcessDefaultInspector', p.id
+        );
         html += '<div style="display:flex; gap:8px; margin-top:8px;">';
         html += '<button class="pr-btn pr-btn-primary" onclick="saveProcessEdit(\'' + p.id + '\',\'' + itemId + '\',' + p.process_order + ')">Save Changes</button>';
         html += '<button class="pr-btn pr-btn-outline" onclick="toggleProcessEditRow(\'' + p.id + '\')">Cancel</button>';
@@ -391,6 +442,17 @@ async function loadPaintProcesses() {
 function toggleProcessEditRow(id) {
     const row = document.getElementById('processEditRow_' + id);
     row.style.display = (row.style.display === 'none') ? 'table-row' : 'none';
+}
+
+async function toggleProcessDefaultInspector(processId, inspectorId, checked) {
+    if (checked) {
+        const { error } = await supabaseClient.from('pr_paint_process_default_inspectors').insert({ process_id: processId, inspector_id: inspectorId });
+        if (error) { alert('Error: ' + error.message); return; }
+    } else {
+        const { error } = await supabaseClient.from('pr_paint_process_default_inspectors').delete().eq('process_id', processId).eq('inspector_id', inspectorId);
+        if (error) { alert('Error: ' + error.message); return; }
+    }
+    loadPaintProcesses();
 }
 
 async function saveProcessEdit(id, itemId, currentOrder) {
