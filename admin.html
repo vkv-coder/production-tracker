@@ -187,7 +187,10 @@ function renderFormatPicker(assignedFmt, availableFmt, toggleFnName, entityId) {
 }
 
 // ============ FAB STEPS ============
+let openFabStepIds = new Set();
+
 async function loadFabSteps() {
+    const scrollY = window.scrollY;
     const container = document.getElementById('fabStepsList');
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
     const [{ data, error }, formats, inspectors] = await Promise.all([
@@ -210,7 +213,7 @@ async function loadFabSteps() {
         html += '<button class="pr-btn pr-btn-danger" onclick="deleteFabStep(\'' + s.id + '\',\'' + jsName + '\')">Delete</button>';
         html += '</td></tr>';
 
-        html += '<tr id="fabStepEditRow_' + s.id + '" style="display:none;"><td colspan="5">';
+        html += '<tr id="fabStepEditRow_' + s.id + '" style="display:' + (openFabStepIds.has(s.id) ? 'table-row' : 'none') + ';"><td colspan="5">';
         html += '<div class="pr-card">';
         html += '<label class="pr-label">Step Name</label><input type="text" class="pr-input" id="fabStepName_' + s.id + '" value="' + escapeHtml(s.step_name) + '">';
         html += '<label class="pr-label">Order Number</label><input type="number" class="pr-input" id="fabStepOrder_' + s.id + '" value="' + s.step_order + '">';
@@ -234,11 +237,14 @@ async function loadFabSteps() {
     });
     html += '</table>';
     container.innerHTML = html;
+    window.scrollTo(0, scrollY);
 }
 
 function toggleFabStepEditRow(id) {
     const row = document.getElementById('fabStepEditRow_' + id);
-    row.style.display = (row.style.display === 'none') ? 'table-row' : 'none';
+    const opening = row.style.display === 'none';
+    row.style.display = opening ? 'table-row' : 'none';
+    if (opening) openFabStepIds.add(id); else openFabStepIds.delete(id);
 }
 
 async function toggleFabStepFormat(fabStepId, formatId, checked) {
@@ -404,7 +410,10 @@ async function deletePaintItem(id, name) {
     loadPaintItems();
 }
 
+let openProcessIds = new Set();
+
 async function loadPaintProcesses() {
+    const scrollY = window.scrollY;
     const itemId = document.getElementById('paintProcessItemSelect').value;
     const container = document.getElementById('paintProcessesList');
     if (!itemId) { container.innerHTML = ''; return; }
@@ -430,7 +439,7 @@ async function loadPaintProcesses() {
         html += '<button class="pr-btn pr-btn-danger" onclick="deletePaintProcess(\'' + p.id + '\',\'' + jsName + '\')">Delete</button>';
         html += '</td></tr>';
 
-        html += '<tr id="processEditRow_' + p.id + '" style="display:none;"><td colspan="5">';
+        html += '<tr id="processEditRow_' + p.id + '" style="display:' + (openProcessIds.has(p.id) ? 'table-row' : 'none') + ';"><td colspan="5">';
         html += '<div class="pr-card">';
         html += '<label class="pr-label">Process Name</label><input type="text" class="pr-input" id="processName_' + p.id + '" value="' + escapeHtml(p.process_name) + '">';
         html += '<label class="pr-label">Order Number</label><input type="number" class="pr-input" id="processOrder_' + p.id + '" value="' + p.process_order + '">';
@@ -454,11 +463,14 @@ async function loadPaintProcesses() {
     });
     html += '</table>';
     container.innerHTML = html;
+    window.scrollTo(0, scrollY);
 }
 
 function toggleProcessEditRow(id) {
     const row = document.getElementById('processEditRow_' + id);
-    row.style.display = (row.style.display === 'none') ? 'table-row' : 'none';
+    const opening = row.style.display === 'none';
+    row.style.display = opening ? 'table-row' : 'none';
+    if (opening) openProcessIds.add(id); else openProcessIds.delete(id);
 }
 
 async function toggleProcessFormat(processId, formatId, checked) {
