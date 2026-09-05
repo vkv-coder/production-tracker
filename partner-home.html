@@ -39,26 +39,48 @@ async function loadAssignedSteps() {
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
     tabsContainer.innerHTML = '';
 
-    const [{ data: fabAssignments }, { data: paintAssignments }] = await Promise.all([
+    const [{ data: fabAssignments }, { data: paintAssignments }, { data: supervisorJobs }] = await Promise.all([
         supabaseClient
             .from('pr_fab_tracking_inspectors')
-            .select('pr_fab_tracking(id, job_id, pr_jobs(job_no, customer_name, status), pr_fab_steps_master(step_name, step_order, inspection_format_id, pr_inspection_formats_master(code)))')
+            .select('pr_fab_tracking(id, job_id, pr_jobs(job_no, customer_name, status), pr_fab_steps_master(step_name, step_order))')
             .eq('inspector_id', session.userId),
         supabaseClient
             .from('pr_paint_tracking_inspectors')
-            .select('pr_paint_tracking(id, job_id, pr_jobs(job_no, customer_name, status), pr_paint_process_master(process_name, process_order, inspection_format_id, pr_inspection_formats_master(code)))')
-            .eq('inspector_id', session.userId)
+            .select('pr_paint_tracking(id, job_id, pr_jobs(job_no, customer_name, status), pr_paint_process_master(process_name, process_order))')
+            .eq('inspector_id', session.userId),
+        supabaseClient
+            .from('pr_jobs')
+            .select('id, job_no, customer_name, status')
+            .eq('supervisor_inspector_id', session.userId)
     ]);
 
     const items = [];
+    const seenFab = new Set(), seenPaint = new Set();
     (fabAssignments || []).forEach(a => {
         const t = a.pr_fab_tracking;
-        if (t) items.push({ type: 'fab', trackingId: t.id, jobId: t.job_id, job: t.pr_jobs, stepName: t.pr_fab_steps_master?.step_name, order: t.pr_fab_steps_master?.step_order, formatId: t.pr_fab_steps_master?.inspection_format_id, formatCode: t.pr_fab_steps_master?.pr_inspection_formats_master?.code });
+        if (t) { items.push({ type: 'fab', trackingId: t.id, jobId: t.job_id, job: t.pr_jobs, stepName: t.pr_fab_steps_master?.step_name, order: t.pr_fab_steps_master?.step_order }); seenFab.add(t.id); }
     });
     (paintAssignments || []).forEach(a => {
         const t = a.pr_paint_tracking;
-        if (t) items.push({ type: 'paint', trackingId: t.id, jobId: t.job_id, job: t.pr_jobs, stepName: t.pr_paint_process_master?.process_name, order: t.pr_paint_process_master?.process_order, formatId: t.pr_paint_process_master?.inspection_format_id, formatCode: t.pr_paint_process_master?.pr_inspection_formats_master?.code });
+        if (t) { items.push({ type: 'paint', trackingId: t.id, jobId: t.job_id, job: t.pr_jobs, stepName: t.pr_paint_process_master?.process_name, order: t.pr_paint_process_master?.process_order }); seenPaint.add(t.id); }
     });
+
+    // Supervisor: pull in EVERY process of their supervised jobs, not just steps they're personally assigned to.
+    const supervisorJobMap = {};
+    (supervisorJobs || []).forEach(j => { supervisorJobMap[j.id] = j; });
+    const supervisorJobIds = Object.keys(supervisorJobMap);
+    if (supervisorJobIds.length > 0) {
+        const [{ data: allFab }, { data: allPaint }] = await Promise.all([
+            supabaseClient.from('pr_fab_tracking').select('id, job_id, pr_fab_steps_master(step_name, step_order)').in('job_id', supervisorJobIds),
+            supabaseClient.from('pr_paint_tracking').select('id, job_id, pr_paint_process_master(process_name, process_order)').in('job_id', supervisorJobIds)
+        ]);
+        (allFab || []).forEach(t => {
+            if (!seenFab.has(t.id)) items.push({ type: 'fab', trackingId: t.id, jobId: t.job_id, job: supervisorJobMap[t.job_id], stepName: t.pr_fab_steps_master?.step_name, order: t.pr_fab_steps_master?.step_order });
+        });
+        (allPaint || []).forEach(t => {
+            if (!seenPaint.has(t.id)) items.push({ type: 'paint', trackingId: t.id, jobId: t.job_id, job: supervisorJobMap[t.job_id], stepName: t.pr_paint_process_master?.process_name, order: t.pr_paint_process_master?.process_order });
+        });
+    }
 
     if (items.length === 0) {
         container.innerHTML = '<p class="pr-empty">No steps assigned to you yet.</p>';
@@ -81,6 +103,40 @@ async function loadAssignedSteps() {
         container.innerHTML = '<p class="pr-empty">No active jobs yet - your assigned sheets will appear here once a job actually starts.</p>';
         return;
     }
+
+    // Batch-fetch every attached inspection format + image for these processes,
+    // same shape as job-detail.html's read side.
+    const fabTrackingIds = startedItems.filter(i => i.type === 'fab').map(i => i.trackingId);
+    const paintTrackingIds = startedItems.filter(i => i.type === 'paint').map(i => i.trackingId);
+
+    const [{ data: fabLinks }, { data: paintLinks }, { data: fabImages }, { data: paintImages }] = await Promise.all([
+        fabTrackingIds.length ? supabaseClient.from('pr_fab_tracking_reports').select('fab_tracking_id, report_id, pr_inspection_reports(format_id, file_path, pr_inspection_formats_master(code))').in('fab_tracking_id', fabTrackingIds) : Promise.resolve({ data: [] }),
+        paintTrackingIds.length ? supabaseClient.from('pr_paint_tracking_reports').select('paint_tracking_id, report_id, pr_inspection_reports(format_id, file_path, pr_inspection_formats_master(code))').in('paint_tracking_id', paintTrackingIds) : Promise.resolve({ data: [] }),
+        fabTrackingIds.length ? supabaseClient.from('pr_process_attachments').select('id, fab_tracking_id, file_path, file_name').in('fab_tracking_id', fabTrackingIds) : Promise.resolve({ data: [] }),
+        paintTrackingIds.length ? supabaseClient.from('pr_process_attachments').select('id, paint_tracking_id, file_path, file_name').in('paint_tracking_id', paintTrackingIds) : Promise.resolve({ data: [] })
+    ]);
+
+    const linksMap = {};
+    (fabLinks || []).forEach(l => {
+        const k = 'fab:' + l.fab_tracking_id;
+        if (!linksMap[k]) linksMap[k] = [];
+        linksMap[k].push({ reportId: l.report_id, code: l.pr_inspection_reports?.pr_inspection_formats_master?.code || 'Inspection', hasFile: !!l.pr_inspection_reports?.file_path });
+    });
+    (paintLinks || []).forEach(l => {
+        const k = 'paint:' + l.paint_tracking_id;
+        if (!linksMap[k]) linksMap[k] = [];
+        linksMap[k].push({ reportId: l.report_id, code: l.pr_inspection_reports?.pr_inspection_formats_master?.code || 'Inspection', hasFile: !!l.pr_inspection_reports?.file_path });
+    });
+
+    const imagesMap = {};
+    (fabImages || []).forEach(img => { const k = 'fab:' + img.fab_tracking_id; if (!imagesMap[k]) imagesMap[k] = []; imagesMap[k].push(img); });
+    (paintImages || []).forEach(img => { const k = 'paint:' + img.paint_tracking_id; if (!imagesMap[k]) imagesMap[k] = []; imagesMap[k].push(img); });
+
+    startedItems.forEach(item => {
+        const k = item.type + ':' + item.trackingId;
+        item.links = linksMap[k] || [];
+        item.images = imagesMap[k] || [];
+    });
 
     jobGroups = {};
     startedItems.forEach(item => {
@@ -122,15 +178,33 @@ function renderSelectedJob() {
         html += '<div class="pr-card">';
         html += '<div class="pr-card-title">' + (item.job ? escapeHtml(item.job.job_no) : 'Job') + (item.job && item.job.customer_name ? ' - ' + escapeHtml(item.job.customer_name) : '') + '</div>';
         html += '<div class="pr-card-sub">' + (item.job ? escapeHtml(item.job.status || '') + ' &middot; ' : '') + (item.order != null ? item.order + '. ' : '') + escapeHtml(item.stepName || '') + '</div>';
-        if (item.formatId) {
-            const param = item.type === 'fab' ? 'fab_tracking' : 'paint_tracking';
-            html += '<a class="pr-btn pr-btn-outline" style="margin-top:8px; display:inline-block;" href="inspection-report.html?' + param + '=' + item.trackingId + '&job=' + item.jobId + '">&#128206; ' + escapeHtml(item.formatCode || 'Inspection') + ' Inspection Sheet</a>';
-        } else {
-            html += '<p class="pr-empty" style="margin:6px 0 0;">No inspection sheet on this step.</p>';
+
+        html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 4px;">';
+        if (item.links.length === 0) {
+            html += '<span style="font-size:12px; color:#999;">No inspection sheet on this step.</span>';
+        }
+        item.links.forEach(l => {
+            html += '<a class="pr-btn pr-btn-outline" style="display:inline-block;" href="inspection-report.html?job=' + item.jobId + '&report=' + l.reportId + '">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a>';
+        });
+        html += '</div>';
+
+        if (item.images.length > 0) {
+            html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin:4px 0;">';
+            item.images.forEach(img => {
+                const jsPath = img.file_path.replace(/'/g, "\\'");
+                html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px;"><a href="#" onclick="viewProcessImage(\'' + jsPath + '\'); return false;" style="color:#1e3a5f;">&#128247; ' + escapeHtml(img.file_name) + '</a></span>';
+            });
+            html += '</div>';
         }
         html += '</div>';
     });
     container.innerHTML = html;
+}
+
+async function viewProcessImage(path) {
+    const { data, error } = await supabaseClient.storage.from('process-images').createSignedUrl(path, 300);
+    if (error) { alert('Error: ' + error.message); return; }
+    window.open(data.signedUrl, '_blank');
 }
 
 function escapeHtml(str) {

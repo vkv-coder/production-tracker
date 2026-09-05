@@ -33,7 +33,6 @@
             <label class="pr-label">Add Fab Step</label>
             <input type="text" id="newFabStepName" class="pr-input" placeholder="Step name">
             <input type="number" id="newFabStepOrder" class="pr-input" placeholder="Order number (e.g. 37)">
-            <select id="newFabStepFormat" class="pr-select"><option value="">-- No inspection format --</option></select>
             <button class="pr-btn pr-btn-primary" onclick="addFabStep()">Add Step</button>
         </div>
         <div id="fabStepsList"><p class="pr-empty">Loading...</p></div>
@@ -53,7 +52,6 @@
             <select id="paintProcessItemSelect" class="pr-select"></select>
             <input type="text" id="newPaintProcessName" class="pr-input" placeholder="Process name">
             <input type="number" id="newPaintProcessOrder" class="pr-input" placeholder="Order number">
-            <select id="newPaintProcessFormat" class="pr-select"><option value="">-- No inspection format --</option></select>
             <button class="pr-btn pr-btn-primary" onclick="addPaintProcess()">Add Process</button>
         </div>
         <div id="paintProcessesList"></div>
@@ -167,15 +165,25 @@ function renderDefaultInspectorPicker(assignedInsp, availableInsp, toggleFnName,
     return html;
 }
 
-function populateFormatSelect(selectEl, formats, currentFormatId) {
-    selectEl.innerHTML = '<option value="">-- No inspection format --</option>';
-    formats.forEach(f => {
-        const opt = document.createElement('option');
-        opt.value = f.id;
-        opt.textContent = f.code + ' — ' + f.name;
-        if (currentFormatId === f.id) opt.selected = true;
-        selectEl.appendChild(opt);
+function renderFormatPicker(assignedFmt, availableFmt, toggleFnName, entityId) {
+    let html = '<label class="pr-label" style="margin-top:8px;">Inspection Formats (attached to this step)</label>';
+    html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 6px;">';
+    if (assignedFmt.length === 0) {
+        html += '<span style="font-size:12px; color:#999;">None</span>';
+    }
+    assignedFmt.forEach(f => {
+        html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' + escapeHtml(f.code) + '<span style="cursor:pointer; font-weight:bold;" onclick="' + toggleFnName + '(\'' + entityId + '\',\'' + f.id + '\',false)">&times;</span></span>';
     });
+    html += '</div>';
+    if (availableFmt.length > 0) {
+        html += '<select class="pr-select" onchange="if(this.value){' + toggleFnName + '(\'' + entityId + '\',this.value,true); this.value=\'\';}">';
+        html += '<option value="">-- Add format --</option>';
+        availableFmt.forEach(f => {
+            html += '<option value="' + f.id + '">' + escapeHtml(f.code) + ' — ' + escapeHtml(f.name) + '</option>';
+        });
+        html += '</select>';
+    }
+    return html;
 }
 
 // ============ FAB STEPS ============
@@ -183,19 +191,18 @@ async function loadFabSteps() {
     const container = document.getElementById('fabStepsList');
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
     const [{ data, error }, formats, inspectors] = await Promise.all([
-        supabaseClient.from('pr_fab_steps_master').select('*, pr_inspection_formats_master(code, name), pr_fab_step_default_inspectors(inspector_id)').eq('company_id', session.companyId).order('step_order'),
+        supabaseClient.from('pr_fab_steps_master').select('*, pr_fab_step_formats(format_id, pr_inspection_formats_master(code, name)), pr_fab_step_default_inspectors(inspector_id)').eq('company_id', session.companyId).order('step_order'),
         fetchActiveFormats(),
         fetchActiveInspectors()
     ]);
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
-    populateFormatSelect(document.getElementById('newFabStepFormat'), formats, null);
-
-    let html = '<table class="pr-table"><tr><th>#</th><th>Step Name</th><th>Insp. Format</th><th>Status</th><th></th></tr>';
+    let html = '<table class="pr-table"><tr><th>#</th><th>Step Name</th><th>Insp. Formats</th><th>Status</th><th></th></tr>';
     (data || []).forEach(s => {
         const jsName = s.step_name.replace(/'/g, "\\'");
+        const stepFormats = s.pr_fab_step_formats || [];
         html += '<tr><td>' + s.step_order + '</td><td>' + escapeHtml(s.step_name) + '</td>';
-        html += '<td>' + (s.pr_inspection_formats_master ? escapeHtml(s.pr_inspection_formats_master.code) : '-') + '</td>';
+        html += '<td>' + (stepFormats.length > 0 ? stepFormats.map(x => escapeHtml(x.pr_inspection_formats_master.code)).join(', ') : '-') + '</td>';
         html += '<td><span class="pr-badge pr-badge-' + (s.is_active ? 'accept' : 'reject') + '">' + (s.is_active ? 'Active' : 'Inactive') + '</span></td>';
         html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
         html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_fab_steps_master\',\'' + s.id + '\',' + s.is_active + ',loadFabSteps)">' + (s.is_active ? 'Deactivate' : 'Activate') + '</button>';
@@ -207,7 +214,12 @@ async function loadFabSteps() {
         html += '<div class="pr-card">';
         html += '<label class="pr-label">Step Name</label><input type="text" class="pr-input" id="fabStepName_' + s.id + '" value="' + escapeHtml(s.step_name) + '">';
         html += '<label class="pr-label">Order Number</label><input type="number" class="pr-input" id="fabStepOrder_' + s.id + '" value="' + s.step_order + '">';
-        html += '<label class="pr-label">Inspection Format</label><select class="pr-select" id="fabStepFormat_' + s.id + '"></select>';
+        const fabAssignedFmtSet = new Set(stepFormats.map(x => x.format_id));
+        html += renderFormatPicker(
+            formats.filter(f => fabAssignedFmtSet.has(f.id)),
+            formats.filter(f => !fabAssignedFmtSet.has(f.id)),
+            'toggleFabStepFormat', s.id
+        );
         const fabDefaultInspSet = new Set((s.pr_fab_step_default_inspectors || []).map(x => x.inspector_id));
         html += renderDefaultInspectorPicker(
             inspectors.filter(i => fabDefaultInspSet.has(i.id)),
@@ -222,15 +234,22 @@ async function loadFabSteps() {
     });
     html += '</table>';
     container.innerHTML = html;
-
-    (data || []).forEach(s => {
-        populateFormatSelect(document.getElementById('fabStepFormat_' + s.id), formats, s.inspection_format_id);
-    });
 }
 
 function toggleFabStepEditRow(id) {
     const row = document.getElementById('fabStepEditRow_' + id);
     row.style.display = (row.style.display === 'none') ? 'table-row' : 'none';
+}
+
+async function toggleFabStepFormat(fabStepId, formatId, checked) {
+    if (checked) {
+        const { error } = await supabaseClient.from('pr_fab_step_formats').insert({ fab_step_id: fabStepId, format_id: formatId });
+        if (error) { alert('Error: ' + error.message); return; }
+    } else {
+        const { error } = await supabaseClient.from('pr_fab_step_formats').delete().eq('fab_step_id', fabStepId).eq('format_id', formatId);
+        if (error) { alert('Error: ' + error.message); return; }
+    }
+    loadFabSteps();
 }
 
 async function toggleFabStepDefaultInspector(fabStepId, inspectorId, checked) {
@@ -247,7 +266,6 @@ async function toggleFabStepDefaultInspector(fabStepId, inspectorId, checked) {
 async function saveFabStepEdit(id, currentOrder) {
     const newName = document.getElementById('fabStepName_' + id).value.trim();
     const newOrder = parseInt(document.getElementById('fabStepOrder_' + id).value);
-    const formatId = document.getElementById('fabStepFormat_' + id).value;
     if (!newName || !newOrder) { alert('Invalid name or order number'); return; }
 
     if (newOrder !== currentOrder) {
@@ -280,7 +298,7 @@ async function saveFabStepEdit(id, currentOrder) {
         }
     }
 
-    const { error } = await supabaseClient.from('pr_fab_steps_master').update({ step_name: newName, step_order: newOrder, inspection_format_id: formatId || null }).eq('id', id);
+    const { error } = await supabaseClient.from('pr_fab_steps_master').update({ step_name: newName, step_order: newOrder }).eq('id', id);
     if (error) { alert('Error: ' + error.message); return; }
     loadFabSteps();
 }
@@ -305,7 +323,6 @@ async function deleteFabStep(id, name) {
 async function addFabStep() {
     const name = document.getElementById('newFabStepName').value.trim();
     const order = parseInt(document.getElementById('newFabStepOrder').value);
-    const formatId = document.getElementById('newFabStepFormat').value;
     if (!name || !order) { alert('Enter step name and order number'); return; }
 
     // Shift every existing step at/after this position up by 1, highest first, so inserting mid-sequence doesn't collide
@@ -321,7 +338,7 @@ async function addFabStep() {
         if (shiftError) { alert('Error renumbering existing steps: ' + shiftError.message); return; }
     }
 
-    const { error } = await supabaseClient.from('pr_fab_steps_master').insert({ company_id: session.companyId, step_name: name, step_order: order, inspection_format_id: formatId || null });
+    const { error } = await supabaseClient.from('pr_fab_steps_master').insert({ company_id: session.companyId, step_name: name, step_order: order });
     if (error) { alert('Error: ' + error.message); return; }
     document.getElementById('newFabStepName').value = '';
     document.getElementById('newFabStepOrder').value = '';
@@ -394,19 +411,18 @@ async function loadPaintProcesses() {
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
 
     const [{ data, error }, formats, inspectors] = await Promise.all([
-        supabaseClient.from('pr_paint_process_master').select('*, pr_inspection_formats_master(code, name), pr_paint_process_default_inspectors(inspector_id)').eq('paint_item_id', itemId).order('process_order'),
+        supabaseClient.from('pr_paint_process_master').select('*, pr_paint_process_formats(format_id, pr_inspection_formats_master(code, name)), pr_paint_process_default_inspectors(inspector_id)').eq('paint_item_id', itemId).order('process_order'),
         fetchActiveFormats(),
         fetchActiveInspectors()
     ]);
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
-    populateFormatSelect(document.getElementById('newPaintProcessFormat'), formats, null);
-
-    let html = '<table class="pr-table"><tr><th>#</th><th>Process Name</th><th>Insp. Format</th><th>Status</th><th></th></tr>';
+    let html = '<table class="pr-table"><tr><th>#</th><th>Process Name</th><th>Insp. Formats</th><th>Status</th><th></th></tr>';
     (data || []).forEach(p => {
         const jsName = p.process_name.replace(/'/g, "\\'");
+        const procFormats = p.pr_paint_process_formats || [];
         html += '<tr><td>' + p.process_order + '</td><td>' + escapeHtml(p.process_name) + '</td>';
-        html += '<td>' + (p.pr_inspection_formats_master ? escapeHtml(p.pr_inspection_formats_master.code) : '-') + '</td>';
+        html += '<td>' + (procFormats.length > 0 ? procFormats.map(x => escapeHtml(x.pr_inspection_formats_master.code)).join(', ') : '-') + '</td>';
         html += '<td><span class="pr-badge pr-badge-' + (p.is_active ? 'accept' : 'reject') + '">' + (p.is_active ? 'Active' : 'Inactive') + '</span></td>';
         html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
         html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_paint_process_master\',\'' + p.id + '\',' + p.is_active + ',loadPaintProcesses)">' + (p.is_active ? 'Deactivate' : 'Activate') + '</button>';
@@ -418,7 +434,12 @@ async function loadPaintProcesses() {
         html += '<div class="pr-card">';
         html += '<label class="pr-label">Process Name</label><input type="text" class="pr-input" id="processName_' + p.id + '" value="' + escapeHtml(p.process_name) + '">';
         html += '<label class="pr-label">Order Number</label><input type="number" class="pr-input" id="processOrder_' + p.id + '" value="' + p.process_order + '">';
-        html += '<label class="pr-label">Inspection Format</label><select class="pr-select" id="processFormat_' + p.id + '"></select>';
+        const paintAssignedFmtSet = new Set(procFormats.map(x => x.format_id));
+        html += renderFormatPicker(
+            formats.filter(f => paintAssignedFmtSet.has(f.id)),
+            formats.filter(f => !paintAssignedFmtSet.has(f.id)),
+            'toggleProcessFormat', p.id
+        );
         const paintDefaultInspSet = new Set((p.pr_paint_process_default_inspectors || []).map(x => x.inspector_id));
         html += renderDefaultInspectorPicker(
             inspectors.filter(i => paintDefaultInspSet.has(i.id)),
@@ -433,15 +454,22 @@ async function loadPaintProcesses() {
     });
     html += '</table>';
     container.innerHTML = html;
-
-    (data || []).forEach(p => {
-        populateFormatSelect(document.getElementById('processFormat_' + p.id), formats, p.inspection_format_id);
-    });
 }
 
 function toggleProcessEditRow(id) {
     const row = document.getElementById('processEditRow_' + id);
     row.style.display = (row.style.display === 'none') ? 'table-row' : 'none';
+}
+
+async function toggleProcessFormat(processId, formatId, checked) {
+    if (checked) {
+        const { error } = await supabaseClient.from('pr_paint_process_formats').insert({ process_id: processId, format_id: formatId });
+        if (error) { alert('Error: ' + error.message); return; }
+    } else {
+        const { error } = await supabaseClient.from('pr_paint_process_formats').delete().eq('process_id', processId).eq('format_id', formatId);
+        if (error) { alert('Error: ' + error.message); return; }
+    }
+    loadPaintProcesses();
 }
 
 async function toggleProcessDefaultInspector(processId, inspectorId, checked) {
@@ -458,7 +486,6 @@ async function toggleProcessDefaultInspector(processId, inspectorId, checked) {
 async function saveProcessEdit(id, itemId, currentOrder) {
     const newName = document.getElementById('processName_' + id).value.trim();
     const newOrder = parseInt(document.getElementById('processOrder_' + id).value);
-    const formatId = document.getElementById('processFormat_' + id).value;
     if (!newName || !newOrder) { alert('Invalid name or order number'); return; }
 
     if (newOrder !== currentOrder) {
@@ -491,7 +518,7 @@ async function saveProcessEdit(id, itemId, currentOrder) {
         }
     }
 
-    const { error } = await supabaseClient.from('pr_paint_process_master').update({ process_name: newName, process_order: newOrder, inspection_format_id: formatId || null }).eq('id', id);
+    const { error } = await supabaseClient.from('pr_paint_process_master').update({ process_name: newName, process_order: newOrder }).eq('id', id);
     if (error) { alert('Error: ' + error.message); return; }
     loadPaintProcesses();
 }
@@ -517,7 +544,6 @@ async function addPaintProcess() {
     const itemId = document.getElementById('paintProcessItemSelect').value;
     const name = document.getElementById('newPaintProcessName').value.trim();
     const order = parseInt(document.getElementById('newPaintProcessOrder').value);
-    const formatId = document.getElementById('newPaintProcessFormat').value;
     if (!itemId || !name || !order) { alert('Select item, enter process name and order'); return; }
 
     // Shift every existing process at/after this position up by 1, highest first, so inserting mid-sequence doesn't collide
@@ -533,7 +559,7 @@ async function addPaintProcess() {
         if (shiftError) { alert('Error renumbering existing processes: ' + shiftError.message); return; }
     }
 
-    const { error } = await supabaseClient.from('pr_paint_process_master').insert({ company_id: session.companyId, paint_item_id: itemId, process_name: name, process_order: order, inspection_format_id: formatId || null });
+    const { error } = await supabaseClient.from('pr_paint_process_master').insert({ company_id: session.companyId, paint_item_id: itemId, process_name: name, process_order: order });
     if (error) { alert('Error: ' + error.message); return; }
     document.getElementById('newPaintProcessName').value = '';
     document.getElementById('newPaintProcessOrder').value = '';
@@ -695,9 +721,10 @@ async function deleteWorker(workerId, workerName) {
 async function loadJobsAdmin() {
     const container = document.getElementById('jobsList');
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
-    const [{ data, error }, { data: units }] = await Promise.all([
+    const [{ data, error }, { data: units }, inspectors] = await Promise.all([
         supabaseClient.from('pr_jobs').select('*, pr_units(unit_name)').eq('company_id', session.companyId).order('created_at', { ascending: false }),
-        supabaseClient.from('pr_units').select('id, unit_name').eq('company_id', session.companyId).eq('is_active', true).order('unit_name')
+        supabaseClient.from('pr_units').select('id, unit_name').eq('company_id', session.companyId).eq('is_active', true).order('unit_name'),
+        fetchActiveInspectors()
     ]);
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
@@ -719,6 +746,11 @@ async function loadJobsAdmin() {
         html += '<label class="pr-label">Unit</label><select class="pr-select" id="jobUnit_' + j.id + '"><option value="">-- None --</option>';
         (units || []).forEach(u => {
             html += '<option value="' + u.id + '"' + (j.unit_id === u.id ? ' selected' : '') + '>' + escapeHtml(u.unit_name) + '</option>';
+        });
+        html += '</select>';
+        html += '<label class="pr-label">Supervisor (sees all sub-processes as Partner)</label><select class="pr-select" id="jobSupervisor_' + j.id + '"><option value="">-- None --</option>';
+        inspectors.forEach(i => {
+            html += '<option value="' + i.id + '"' + (j.supervisor_inspector_id === i.id ? ' selected' : '') + '>' + escapeHtml(i.inspector_name) + '</option>';
         });
         html += '</select>';
         html += '<label class="pr-label">Description / Qty</label><textarea class="pr-input" rows="2" id="jobDesc_' + j.id + '">' + escapeHtml(j.description || '') + '</textarea>';
@@ -746,9 +778,10 @@ async function saveJobEdit(jobId) {
     const jobNo = document.getElementById('jobNo_' + jobId).value.trim();
     const customer = document.getElementById('jobCust_' + jobId).value.trim();
     const unitId = document.getElementById('jobUnit_' + jobId).value;
+    const supervisorId = document.getElementById('jobSupervisor_' + jobId).value;
     const desc = document.getElementById('jobDesc_' + jobId).value.trim();
     const status = document.getElementById('jobStatus_' + jobId).value;
-    const { error } = await supabaseClient.from('pr_jobs').update({ job_no: jobNo, customer_name: customer || null, unit_id: unitId || null, description: desc || null, status: status }).eq('id', jobId);
+    const { error } = await supabaseClient.from('pr_jobs').update({ job_no: jobNo, customer_name: customer || null, unit_id: unitId || null, supervisor_inspector_id: supervisorId || null, description: desc || null, status: status }).eq('id', jobId);
     if (error) { alert('Error: ' + error.message); return; }
     alert('Saved');
     loadJobsAdmin();
@@ -873,8 +906,8 @@ async function deleteInspectionFormat(id, code) {
     const forceMsg = 'This format is attached to one or more steps and/or has inspection sheets already using it.\n\nForce delete will detach it from those steps and PERMANENTLY delete any inspection sheets (including uploaded files) and the master template that used it. This cannot be undone.\n\nForce delete anyway?';
     if (!confirm(forceMsg)) return;
 
-    await supabaseClient.from('pr_fab_steps_master').update({ inspection_format_id: null }).eq('inspection_format_id', id);
-    await supabaseClient.from('pr_paint_process_master').update({ inspection_format_id: null }).eq('inspection_format_id', id);
+    await supabaseClient.from('pr_fab_step_formats').delete().eq('format_id', id);
+    await supabaseClient.from('pr_paint_process_formats').delete().eq('format_id', id);
 
     const { data: reports } = await supabaseClient.from('pr_inspection_reports').select('id, file_path').eq('format_id', id);
     const filePaths = (reports || []).filter(r => r.file_path).map(r => r.file_path);

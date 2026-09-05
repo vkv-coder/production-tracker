@@ -54,23 +54,37 @@ async function loadUnits() {
     });
 }
 
-async function attachTemplateToReport(jobId, formatId, sourceCol, trackingId, templateInfo) {
-    const insertObj = { company_id: session.companyId, job_id: jobId, format_id: formatId };
-    insertObj[sourceCol] = trackingId;
-    const { data: report, error } = await supabaseClient.from('pr_inspection_reports').insert(insertObj).select('id').single();
-    if (error || !report) { console.error('Inspection sheet auto-attach: could not create report row', error); return false; }
+async function attachFormatToTracking(jobId, formatId, sourceCol, trackingId, templateInfo) {
+    const linkTable = sourceCol === 'fab_tracking_id' ? 'pr_fab_tracking_reports' : 'pr_paint_tracking_reports';
 
-    const destPath = session.companyId + '/' + report.id + '/' + templateInfo.template_file_name;
-    const { error: copyError } = await supabaseClient.storage.from('inspection-sheets').copy(templateInfo.template_file_path, destPath);
-    if (copyError) { console.error('Inspection sheet auto-attach: could not copy template file', copyError, 'from:', templateInfo.template_file_path, 'to:', destPath); return false; }
+    let reportId;
+    const { data: existing } = await supabaseClient.from('pr_inspection_reports').select('id').eq('job_id', jobId).eq('format_id', formatId).maybeSingle();
+    if (existing) {
+        reportId = existing.id;
+    } else {
+        const { data: report, error } = await supabaseClient.from('pr_inspection_reports').insert({ company_id: session.companyId, job_id: jobId, format_id: formatId }).select('id').single();
+        if (error || !report) { console.error('Inspection sheet auto-attach: could not create report row', error); return false; }
+        reportId = report.id;
 
-    const { error: updateError } = await supabaseClient.from('pr_inspection_reports').update({
-        file_path: destPath,
-        file_name: templateInfo.template_file_name,
-        uploaded_by: 'Template (auto-attached)',
-        uploaded_at: new Date().toISOString()
-    }).eq('id', report.id);
-    if (updateError) { console.error('Inspection sheet auto-attach: could not update report row', updateError); return false; }
+        if (templateInfo && templateInfo.template_file_path) {
+            const destPath = session.companyId + '/' + reportId + '/' + templateInfo.template_file_name;
+            const { error: copyError } = await supabaseClient.storage.from('inspection-sheets').copy(templateInfo.template_file_path, destPath);
+            if (copyError) { console.error('Inspection sheet auto-attach: could not copy template file', copyError, 'from:', templateInfo.template_file_path, 'to:', destPath); return false; }
+
+            const { error: updateError } = await supabaseClient.from('pr_inspection_reports').update({
+                file_path: destPath,
+                file_name: templateInfo.template_file_name,
+                uploaded_by: 'Template (auto-attached)',
+                uploaded_at: new Date().toISOString()
+            }).eq('id', reportId);
+            if (updateError) { console.error('Inspection sheet auto-attach: could not update report row', updateError); return false; }
+        }
+    }
+
+    const linkObj = { report_id: reportId };
+    linkObj[sourceCol] = trackingId;
+    const { error: linkError } = await supabaseClient.from(linkTable).insert(linkObj);
+    if (linkError && linkError.code !== '23505') { console.error('Inspection sheet auto-attach: could not link report to tracking row', linkError); return false; }
     return true;
 }
 
@@ -118,7 +132,7 @@ async function createJob() {
     // 2. Create blank Fab tracking rows for every Fab step in this company's master
     const { data: fabSteps } = await supabaseClient
         .from('pr_fab_steps_master')
-        .select('id, inspection_format_id, pr_inspection_formats_master(template_file_path, template_file_name), pr_fab_step_default_inspectors(inspector_id)')
+        .select('id, pr_fab_step_formats(format_id, pr_inspection_formats_master(template_file_path, template_file_name)), pr_fab_step_default_inspectors(inspector_id)')
         .eq('company_id', session.companyId)
         .eq('is_active', true);
 
@@ -135,8 +149,8 @@ async function createJob() {
             fabSteps.forEach(s => { stepMap[s.id] = s; });
             for (const row of insertedFab) {
                 const step = stepMap[row.fab_step_id];
-                if (step && step.inspection_format_id && step.pr_inspection_formats_master?.template_file_path) {
-                    const ok = await attachTemplateToReport(jobId, step.inspection_format_id, 'fab_tracking_id', row.id, step.pr_inspection_formats_master);
+                for (const sf of (step?.pr_fab_step_formats || [])) {
+                    const ok = await attachFormatToTracking(jobId, sf.format_id, 'fab_tracking_id', row.id, sf.pr_inspection_formats_master);
                     if (!ok) templateAttachFailures++;
                 }
                 const defaultInspectors = step?.pr_fab_step_default_inspectors || [];
@@ -153,7 +167,7 @@ async function createJob() {
     // 3. Create blank Paint tracking rows for every process, under every paint item
     const { data: paintProcesses } = await supabaseClient
         .from('pr_paint_process_master')
-        .select('id, paint_item_id, inspection_format_id, pr_inspection_formats_master(template_file_path, template_file_name), pr_paint_process_default_inspectors(inspector_id)')
+        .select('id, paint_item_id, pr_paint_process_formats(format_id, pr_inspection_formats_master(template_file_path, template_file_name)), pr_paint_process_default_inspectors(inspector_id)')
         .eq('company_id', session.companyId)
         .eq('is_active', true);
 
@@ -170,8 +184,8 @@ async function createJob() {
             paintProcesses.forEach(p => { processMap[p.id] = p; });
             for (const row of insertedPaint) {
                 const proc = processMap[row.process_id];
-                if (proc && proc.inspection_format_id && proc.pr_inspection_formats_master?.template_file_path) {
-                    const ok = await attachTemplateToReport(jobId, proc.inspection_format_id, 'paint_tracking_id', row.id, proc.pr_inspection_formats_master);
+                for (const pf of (proc?.pr_paint_process_formats || [])) {
+                    const ok = await attachFormatToTracking(jobId, pf.format_id, 'paint_tracking_id', row.id, pf.pr_inspection_formats_master);
                     if (!ok) templateAttachFailures++;
                 }
                 const defaultInspectors = proc?.pr_paint_process_default_inspectors || [];

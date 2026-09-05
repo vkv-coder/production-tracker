@@ -65,6 +65,7 @@ const jobId = urlParams.get('job');
 
 let inspectorsList = [];
 let workersList = [];
+let formatsList = [];
 let paintItems = [];
 let currentPaintItemId = null;
 
@@ -84,7 +85,72 @@ async function init() {
     const { data: items } = await supabaseClient.from('pr_paint_items_master').select('id, item_name').eq('company_id', session.companyId).eq('is_active', true);
     paintItems = items || [];
 
+    const { data: fmts } = await supabaseClient.from('pr_inspection_formats_master').select('id, code, name').eq('company_id', session.companyId).eq('is_active', true).order('code');
+    formatsList = fmts || [];
+
     loadFabTable();
+}
+
+async function attachFormatToTracking(formatId, sourceCol, trackingId) {
+    const linkTable = sourceCol === 'fab_tracking_id' ? 'pr_fab_tracking_reports' : 'pr_paint_tracking_reports';
+
+    let reportId;
+    const { data: existing } = await supabaseClient.from('pr_inspection_reports').select('id').eq('job_id', jobId).eq('format_id', formatId).maybeSingle();
+    if (existing) {
+        reportId = existing.id;
+    } else {
+        const { data: fmt } = await supabaseClient.from('pr_inspection_formats_master').select('template_file_path, template_file_name').eq('id', formatId).maybeSingle();
+        const { data: report, error } = await supabaseClient.from('pr_inspection_reports').insert({ company_id: session.companyId, job_id: jobId, format_id: formatId }).select('id').single();
+        if (error || !report) { alert('Error creating report: ' + (error ? error.message : 'unknown')); return false; }
+        reportId = report.id;
+
+        if (fmt && fmt.template_file_path) {
+            const destPath = session.companyId + '/' + reportId + '/' + fmt.template_file_name;
+            const { error: copyError } = await supabaseClient.storage.from('inspection-sheets').copy(fmt.template_file_path, destPath);
+            if (!copyError) {
+                await supabaseClient.from('pr_inspection_reports').update({
+                    file_path: destPath, file_name: fmt.template_file_name,
+                    uploaded_by: 'Template (auto-attached)', uploaded_at: new Date().toISOString()
+                }).eq('id', reportId);
+            }
+        }
+    }
+
+    const linkObj = { report_id: reportId };
+    linkObj[sourceCol] = trackingId;
+    const { error: linkError } = await supabaseClient.from(linkTable).insert(linkObj);
+    if (linkError && linkError.code !== '23505') { alert('Error linking format: ' + linkError.message); return false; }
+    return true;
+}
+
+async function uploadProcessImage(inputEl, sourceCol, trackingId, reloadFn) {
+    const file = inputEl.files[0];
+    if (!file) return;
+    const attachmentId = crypto.randomUUID();
+    const path = session.companyId + '/' + attachmentId + '/' + file.name;
+    const { error: uploadError } = await supabaseClient.storage.from('process-images').upload(path, file);
+    if (uploadError) { alert('Error uploading: ' + uploadError.message); return; }
+
+    const insertObj = { id: attachmentId, company_id: session.companyId, file_path: path, file_name: file.name, uploaded_by: session.name || '' };
+    insertObj[sourceCol] = trackingId;
+    const { error } = await supabaseClient.from('pr_process_attachments').insert(insertObj);
+    if (error) { alert('Error saving: ' + error.message); return; }
+    inputEl.value = '';
+    reloadFn();
+}
+
+async function viewProcessImage(path) {
+    const { data, error } = await supabaseClient.storage.from('process-images').createSignedUrl(path, 300);
+    if (error) { alert('Error: ' + error.message); return; }
+    window.open(data.signedUrl, '_blank');
+}
+
+async function deleteProcessImage(id, path, reloadFn) {
+    if (!confirm('Remove this image?')) return;
+    await supabaseClient.storage.from('process-images').remove([path]);
+    const { error } = await supabaseClient.from('pr_process_attachments').delete().eq('id', id);
+    if (error) { alert('Error: ' + error.message); return; }
+    reloadFn();
 }
 
 let currentJob = null;
@@ -151,7 +217,7 @@ async function loadFabTable() {
 
     const { data } = await supabaseClient
         .from('pr_fab_tracking')
-        .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, inspection_date, start_delay_reason, end_delay_reason, pr_fab_steps_master(step_name, step_order, inspection_format_id, pr_inspection_formats_master(code))')
+        .select('id, planned_start, planned_end, actual_start, actual_end, inspection_status, inspection_date, start_delay_reason, end_delay_reason, pr_fab_steps_master(step_name, step_order)')
         .eq('job_id', jobId);
 
     if (!data || data.length === 0) {
@@ -167,11 +233,30 @@ async function loadFabTable() {
         .select('fab_tracking_id, worker_id')
         .in('fab_tracking_id', trackingIds);
 
-    const { data: reports } = await supabaseClient
-        .from('pr_inspection_reports')
-        .select('fab_tracking_id')
+    const { data: reportLinks } = await supabaseClient
+        .from('pr_fab_tracking_reports')
+        .select('fab_tracking_id, report_id, pr_inspection_reports(format_id, file_path, pr_inspection_formats_master(code))')
         .in('fab_tracking_id', trackingIds);
-    const reportExistsSet = new Set((reports || []).map(r => r.fab_tracking_id));
+    const reportLinksMap = {};
+    (reportLinks || []).forEach(l => {
+        if (!reportLinksMap[l.fab_tracking_id]) reportLinksMap[l.fab_tracking_id] = [];
+        reportLinksMap[l.fab_tracking_id].push({
+            reportId: l.report_id,
+            formatId: l.pr_inspection_reports?.format_id,
+            code: l.pr_inspection_reports?.pr_inspection_formats_master?.code || 'Inspection',
+            hasFile: !!l.pr_inspection_reports?.file_path
+        });
+    });
+
+    const { data: images } = await supabaseClient
+        .from('pr_process_attachments')
+        .select('id, fab_tracking_id, file_path, file_name')
+        .in('fab_tracking_id', trackingIds);
+    const imagesMap = {};
+    (images || []).forEach(img => {
+        if (!imagesMap[img.fab_tracking_id]) imagesMap[img.fab_tracking_id] = [];
+        imagesMap[img.fab_tracking_id].push(img);
+    });
 
     const assignedMap = {};
     (assignments || []).forEach(a => {
@@ -200,11 +285,37 @@ async function loadFabTable() {
         html += '<div class="pr-card"' + cardStyle + '>';
         html += '<div class="pr-card-title">' + (r.pr_fab_steps_master?.step_order || '') + '. ' + (r.pr_fab_steps_master?.step_name || '') + (delayed ? ' <span style="color:#dc3545; font-size:12px;">&#9888; Delayed</span>' : '') + '</div>';
 
-        if (r.pr_fab_steps_master?.inspection_format_id) {
-            const fmtCode = r.pr_fab_steps_master.pr_inspection_formats_master?.code || 'Inspection';
-            const hasReport = reportExistsSet.has(r.id);
-            html += '<a class="pr-btn pr-btn-outline" style="margin-top:6px; display:inline-block;" href="inspection-report.html?fab_tracking=' + r.id + '&job=' + jobId + '">&#128206; ' + escapeHtml(fmtCode) + ' Inspection Sheet' + (hasReport ? '' : ' (not uploaded)') + '</a>';
+        const fabLinks = reportLinksMap[r.id] || [];
+        const fabLinkedFmtIds = new Set(fabLinks.map(l => l.formatId));
+        const fabAvailableFmts = formatsList.filter(f => !fabLinkedFmtIds.has(f.id));
+        html += '<label class="pr-label" style="margin-top:6px;">Inspection Formats</label>';
+        html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 6px;">';
+        if (fabLinks.length === 0) html += '<span style="font-size:12px; color:#999;">None attached</span>';
+        fabLinks.forEach(l => {
+            html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' +
+                '<a href="inspection-report.html?job=' + jobId + '&report=' + l.reportId + '" style="color:#1e3a5f;">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a>' +
+                '<span style="cursor:pointer; font-weight:bold;" onclick="removeFabFormat(\'' + r.id + '\',\'' + l.reportId + '\')">&times;</span></span>';
+        });
+        html += '</div>';
+        if (fabAvailableFmts.length > 0) {
+            html += '<select class="pr-select" onchange="if(this.value){addFabFormat(\'' + r.id + '\',this.value); this.value=\'\';}">';
+            html += '<option value="">-- Add format --</option>';
+            fabAvailableFmts.forEach(f => { html += '<option value="' + f.id + '">' + escapeHtml(f.code) + ' — ' + escapeHtml(f.name) + '</option>'; });
+            html += '</select>';
         }
+
+        const fabImages = imagesMap[r.id] || [];
+        html += '<label class="pr-label" style="margin-top:8px;">Images</label>';
+        html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 6px;">';
+        if (fabImages.length === 0) html += '<span style="font-size:12px; color:#999;">None</span>';
+        fabImages.forEach(img => {
+            const jsPath = img.file_path.replace(/'/g, "\\'");
+            html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' +
+                '<a href="#" onclick="viewProcessImage(\'' + jsPath + '\'); return false;" style="color:#1e3a5f;">&#128247; ' + escapeHtml(img.file_name) + '</a>' +
+                '<span style="cursor:pointer; font-weight:bold;" onclick="deleteProcessImage(\'' + img.id + '\',\'' + jsPath + '\',loadFabTable)">&times;</span></span>';
+        });
+        html += '</div>';
+        html += '<input type="file" accept="image/*" class="pr-input" onchange="uploadProcessImage(this,\'fab_tracking_id\',\'' + r.id + '\',loadFabTable)">';
 
         html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">';
         html += '<div><label class="pr-label">Planned Start</label><input type="date" class="pr-input" value="' + (r.planned_start || '') + '" onchange="updateFabField(\'' + r.id + '\',\'planned_start\',this.value)"></div>';
@@ -330,6 +441,17 @@ async function toggleFabInspector(trackingId, inspectorId, checked) {
     loadFabTable();
 }
 
+async function addFabFormat(trackingId, formatId) {
+    const ok = await attachFormatToTracking(formatId, 'fab_tracking_id', trackingId);
+    if (ok) loadFabTable();
+}
+
+async function removeFabFormat(trackingId, reportId) {
+    const { error } = await supabaseClient.from('pr_fab_tracking_reports').delete().eq('fab_tracking_id', trackingId).eq('report_id', reportId);
+    if (error) { alert('Error: ' + error.message); return; }
+    loadFabTable();
+}
+
 function escapeHtml(str) {
     return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -364,7 +486,7 @@ async function loadPaintTable() {
 
     const { data } = await supabaseClient
         .from('pr_paint_tracking')
-        .select('id, start_date, start_time, stop_date, stop_time, remarks, process_id, pr_paint_process_master(process_name, process_order, inspection_format_id, pr_inspection_formats_master(code))')
+        .select('id, start_date, start_time, stop_date, stop_time, remarks, process_id, pr_paint_process_master(process_name, process_order)')
         .eq('job_id', jobId)
         .eq('paint_item_id', currentPaintItemId);
 
@@ -376,11 +498,30 @@ async function loadPaintTable() {
     data.sort((a, b) => (a.pr_paint_process_master?.process_order || 0) - (b.pr_paint_process_master?.process_order || 0));
 
     const paintTrackingIds = data.map(r => r.id);
-    const { data: paintReports } = await supabaseClient
-        .from('pr_inspection_reports')
-        .select('paint_tracking_id')
+    const { data: paintReportLinks } = await supabaseClient
+        .from('pr_paint_tracking_reports')
+        .select('paint_tracking_id, report_id, pr_inspection_reports(format_id, file_path, pr_inspection_formats_master(code))')
         .in('paint_tracking_id', paintTrackingIds);
-    const paintReportExistsSet = new Set((paintReports || []).map(r => r.paint_tracking_id));
+    const paintReportLinksMap = {};
+    (paintReportLinks || []).forEach(l => {
+        if (!paintReportLinksMap[l.paint_tracking_id]) paintReportLinksMap[l.paint_tracking_id] = [];
+        paintReportLinksMap[l.paint_tracking_id].push({
+            reportId: l.report_id,
+            formatId: l.pr_inspection_reports?.format_id,
+            code: l.pr_inspection_reports?.pr_inspection_formats_master?.code || 'Inspection',
+            hasFile: !!l.pr_inspection_reports?.file_path
+        });
+    });
+
+    const { data: paintImages } = await supabaseClient
+        .from('pr_process_attachments')
+        .select('id, paint_tracking_id, file_path, file_name')
+        .in('paint_tracking_id', paintTrackingIds);
+    const paintImagesMap = {};
+    (paintImages || []).forEach(img => {
+        if (!paintImagesMap[img.paint_tracking_id]) paintImagesMap[img.paint_tracking_id] = [];
+        paintImagesMap[img.paint_tracking_id].push(img);
+    });
 
     const { data: paintAssignments } = await supabaseClient
         .from('pr_paint_tracking_workers')
@@ -407,11 +548,37 @@ async function loadPaintTable() {
         html += '<div class="pr-card">';
         html += '<div class="pr-card-title">' + (r.pr_paint_process_master?.process_order || '') + '. ' + (r.pr_paint_process_master?.process_name || '') + '</div>';
 
-        if (r.pr_paint_process_master?.inspection_format_id) {
-            const fmtCode = r.pr_paint_process_master.pr_inspection_formats_master?.code || 'Inspection';
-            const hasReport = paintReportExistsSet.has(r.id);
-            html += '<a class="pr-btn pr-btn-outline" style="margin-top:6px; display:inline-block;" href="inspection-report.html?paint_tracking=' + r.id + '&job=' + jobId + '">&#128206; ' + escapeHtml(fmtCode) + ' Inspection Sheet' + (hasReport ? '' : ' (not uploaded)') + '</a>';
+        const paintLinks = paintReportLinksMap[r.id] || [];
+        const paintLinkedFmtIds = new Set(paintLinks.map(l => l.formatId));
+        const paintAvailableFmts = formatsList.filter(f => !paintLinkedFmtIds.has(f.id));
+        html += '<label class="pr-label" style="margin-top:6px;">Inspection Formats</label>';
+        html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 6px;">';
+        if (paintLinks.length === 0) html += '<span style="font-size:12px; color:#999;">None attached</span>';
+        paintLinks.forEach(l => {
+            html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' +
+                '<a href="inspection-report.html?job=' + jobId + '&report=' + l.reportId + '" style="color:#1e3a5f;">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a>' +
+                '<span style="cursor:pointer; font-weight:bold;" onclick="removePaintFormat(\'' + r.id + '\',\'' + l.reportId + '\')">&times;</span></span>';
+        });
+        html += '</div>';
+        if (paintAvailableFmts.length > 0) {
+            html += '<select class="pr-select" onchange="if(this.value){addPaintFormat(\'' + r.id + '\',this.value); this.value=\'\';}">';
+            html += '<option value="">-- Add format --</option>';
+            paintAvailableFmts.forEach(f => { html += '<option value="' + f.id + '">' + escapeHtml(f.code) + ' — ' + escapeHtml(f.name) + '</option>'; });
+            html += '</select>';
         }
+
+        const paintProcImages = paintImagesMap[r.id] || [];
+        html += '<label class="pr-label" style="margin-top:8px;">Images</label>';
+        html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 6px;">';
+        if (paintProcImages.length === 0) html += '<span style="font-size:12px; color:#999;">None</span>';
+        paintProcImages.forEach(img => {
+            const jsPath = img.file_path.replace(/'/g, "\\'");
+            html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' +
+                '<a href="#" onclick="viewProcessImage(\'' + jsPath + '\'); return false;" style="color:#1e3a5f;">&#128247; ' + escapeHtml(img.file_name) + '</a>' +
+                '<span style="cursor:pointer; font-weight:bold;" onclick="deleteProcessImage(\'' + img.id + '\',\'' + jsPath + '\',loadPaintTable)">&times;</span></span>';
+        });
+        html += '</div>';
+        html += '<input type="file" accept="image/*" class="pr-input" onchange="uploadProcessImage(this,\'paint_tracking_id\',\'' + r.id + '\',loadPaintTable)">';
 
         html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">';
         html += '<div><label class="pr-label">Start Date</label><input type="date" class="pr-input" value="' + (r.start_date || '') + '" onchange="updatePaintField(\'' + r.id + '\',\'start_date\',this.value)"></div>';
@@ -494,6 +661,17 @@ async function togglePaintInspector(trackingId, inspectorId, checked) {
         const { error } = await supabaseClient.from('pr_paint_tracking_inspectors').delete().eq('paint_tracking_id', trackingId).eq('inspector_id', inspectorId);
         if (error) { alert('Error removing inspector: ' + error.message); return; }
     }
+    loadPaintTable();
+}
+
+async function addPaintFormat(trackingId, formatId) {
+    const ok = await attachFormatToTracking(formatId, 'paint_tracking_id', trackingId);
+    if (ok) loadPaintTable();
+}
+
+async function removePaintFormat(trackingId, reportId) {
+    const { error } = await supabaseClient.from('pr_paint_tracking_reports').delete().eq('paint_tracking_id', trackingId).eq('report_id', reportId);
+    if (error) { alert('Error: ' + error.message); return; }
     loadPaintTable();
 }
 
