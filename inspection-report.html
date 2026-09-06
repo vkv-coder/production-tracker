@@ -45,9 +45,11 @@ let activeCell = null;
 let currentWorkbook = null;
 let usingAdvancedEngine = false;
 let usedFallback = false;
+let fallbackReason = '';
 let sheetNames = [];
 let currentSheetIndex = 0;
 let validationMap = null;
+let validationDiagnostic = '';
 
 function goBack() {
     window.location.href = (session.role === 'Partner') ? 'partner-home.html' : ('job-detail.html?job=' + jobId);
@@ -87,6 +89,8 @@ async function loadSheetIntoGrid() {
     currentWorkbook = null;
     usingAdvancedEngine = false;
     usedFallback = false;
+    fallbackReason = '';
+    validationDiagnostic = '';
     sheetNames = [];
     currentSheetIndex = 0;
     validationMap = null;
@@ -105,6 +109,7 @@ async function loadSheetIntoGrid() {
             return;
         } catch (e) {
             usedFallback = true;
+            fallbackReason = e && e.message ? e.message : String(e);
             try {
                 const arrayBuffer = await blob.arrayBuffer();
                 const wb = XLSX.read(arrayBuffer, { type: 'array' });
@@ -143,11 +148,20 @@ function loadSheetFromWorkbook(sheetIndex) {
     gridData = rawValues.map(row => (Array.isArray(row) ? row : [row]).map(c => (c === null || c === undefined) ? '' : String(c)));
     if (gridData.length === 0) gridData = blankGrid();
 
+    let validationCheckError = '';
+    let dropdownCellCount = 0;
     validationMap = gridData.map((row, r) => row.map((cellVal, c) => {
         let dv = null;
-        try { dv = used.cell(r, c).dataValidation(); } catch (e) { dv = null; }
-        return (dv && dv.type === 'list') ? resolveListOptions(dv.formula1, sheet) : null;
+        try { dv = used.cell(r, c).dataValidation(); } catch (e) { if (!validationCheckError) validationCheckError = (e && e.message) ? e.message : String(e); return null; }
+        const opts = (dv && dv.type === 'list') ? resolveListOptions(dv.formula1, sheet) : null;
+        if (opts) dropdownCellCount++;
+        return opts;
     }));
+    const dimNote = gridData.length + ' rows x ' + (gridData[0] ? gridData[0].length : 0) + ' cols detected';
+    validationDiagnostic = (validationCheckError
+        ? ('dropdown check failed: ' + validationCheckError)
+        : (dropdownCellCount === 0 ? 'no dropdown-list validations found on this sheet' : (dropdownCellCount + ' dropdown cell(s) detected'))
+    ) + ' | ' + dimNote;
 
     renderGrid();
 }
@@ -207,7 +221,9 @@ function renderGrid() {
         html += '<p style="font-size:12px; color:#666; margin:0 0 8px;">Last saved by ' + escapeHtml(report.uploaded_by || '-') + ' on ' + new Date(report.uploaded_at).toLocaleString() + '</p>';
     }
     if (usedFallback) {
-        html += '<p style="font-size:12px; color:#b8860b; margin:0 0 8px;">⚠️ Advanced view (multiple sheets/dropdowns) isn\'t available for this file — editing in simple mode.</p>';
+        html += '<p style="font-size:12px; color:#b8860b; margin:0 0 8px;">⚠️ Advanced view (multiple sheets/dropdowns) isn\'t available for this file — editing in simple mode. (' + escapeHtml(fallbackReason) + ')</p>';
+    } else if (usingAdvancedEngine && validationDiagnostic) {
+        html += '<p style="font-size:11px; color:#888; margin:0 0 8px;">' + escapeHtml(validationDiagnostic) + '</p>';
     }
 
     if (usingAdvancedEngine && sheetNames.length > 1) {
@@ -259,7 +275,11 @@ function renderGrid() {
 function updateCell(r, c, value) {
     gridData[r][c] = value;
     if (usingAdvancedEngine && currentWorkbook) {
-        currentWorkbook.sheet(currentSheetIndex).cell(r + 1, c + 1).value(value);
+        try {
+            currentWorkbook.sheet(currentSheetIndex).cell(r + 1, c + 1).value(value);
+        } catch (e) {
+            alert('Could not record this edit into the file: ' + (e && e.message ? e.message : e));
+        }
     }
 }
 
@@ -282,14 +302,19 @@ function addColumn() {
 
 async function saveSheetGrid() {
     let blob;
-    if (usingAdvancedEngine && currentWorkbook) {
-        blob = await currentWorkbook.outputAsync();
-    } else {
-        const ws = XLSX.utils.aoa_to_sheet(gridData);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
-        const wbout = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
-        blob = new Blob([wbout], { type: 'application/octet-stream' });
+    try {
+        if (usingAdvancedEngine && currentWorkbook) {
+            blob = await currentWorkbook.outputAsync();
+        } else {
+            const ws = XLSX.utils.aoa_to_sheet(gridData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+            const wbout = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+            blob = new Blob([wbout], { type: 'application/octet-stream' });
+        }
+    } catch (e) {
+        alert('Error preparing file to save: ' + (e && e.message ? e.message : e));
+        return;
     }
 
     const fileName = (report.file_name && report.file_name.trim()) || ((format ? format.code : 'sheet') + '.xlsx');
