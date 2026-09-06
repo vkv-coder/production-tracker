@@ -104,6 +104,8 @@ async function loadSheetIntoGrid() {
     sheetNames = [];
     currentSheetIndex = 0;
     validationMap = null;
+    mergeAnchors = {};
+    mergeCovered = new Set();
 
     if (report.file_path) {
         const { data: blob, error } = await supabaseClient.storage.from('inspection-sheets').download(report.file_path);
@@ -150,6 +152,8 @@ function loadSheetFromWorkbook(sheetIndex) {
     if (!used) {
         gridData = blankGrid();
         validationMap = gridData.map(row => row.map(() => null));
+        mergeAnchors = {};
+        mergeCovered = new Set();
         renderGrid();
         return;
     }
@@ -158,9 +162,12 @@ function loadSheetFromWorkbook(sheetIndex) {
     gridData = rawValues.map(row => (Array.isArray(row) ? row : [row]).map(c => (c === null || c === undefined) ? '' : String(c)));
     if (gridData.length === 0) gridData = blankGrid();
 
+    buildMergeMaps(sheet, used);
+
     let validationCheckError = '';
     let dropdownCellCount = 0;
     validationMap = gridData.map((row, r) => row.map((cellVal, c) => {
+        if (mergeCovered.has(r + ',' + c)) return null;
         let dv = null;
         try { dv = used.cell(r, c).dataValidation(); } catch (e) { if (!validationCheckError) validationCheckError = (e && e.message) ? e.message : String(e); return null; }
         const opts = (dv && dv.type === 'list') ? resolveListOptions(dv.formula1, sheet) : null;
@@ -174,6 +181,55 @@ function loadSheetFromWorkbook(sheetIndex) {
     ) + ' | ' + dimNote;
 
     renderGrid();
+}
+
+// Merged header/label cells in the original file (e.g. a 2-column-wide "Total
+// OK" header) were being unmerged into a content cell plus a blank "ghost"
+// column next to it — the reported "extra column against every column".
+// sheet._mergeCells isn't part of the documented public API, but it's the
+// only way to read merge ranges (the library exposes no public getter for
+// them), keyed by address string like "C3:D3". Parse those into relative
+// (row,col) coordinates matching gridData/validationMap, so rendering can
+// collapse each merge back into one spanning <td> instead of N separate ones.
+let mergeAnchors = {};
+let mergeCovered = new Set();
+
+function parseCellRef(ref) {
+    const m = ref.match(/^\$?([A-Z]+)\$?(\d+)$/i);
+    if (!m) return null;
+    let col = 0;
+    const letters = m[1].toUpperCase();
+    for (let i = 0; i < letters.length; i++) col = col * 26 + (letters.charCodeAt(i) - 64);
+    return { row: parseInt(m[2], 10), col: col };
+}
+
+function buildMergeMaps(sheet, used) {
+    mergeAnchors = {};
+    mergeCovered = new Set();
+    const mergeKeys = (sheet._mergeCells && Object.keys(sheet._mergeCells)) || [];
+    if (mergeKeys.length === 0) return;
+
+    const startCell = used.startCell();
+    const startRow = startCell.rowNumber();
+    const startCol = startCell.columnNumber();
+
+    mergeKeys.forEach(ref => {
+        const parts = ref.split(':');
+        if (parts.length !== 2) return;
+        const start = parseCellRef(parts[0]);
+        const end = parseCellRef(parts[1]);
+        if (!start || !end) return;
+        const r0 = start.row - startRow, c0 = start.col - startCol;
+        const r1 = end.row - startRow, c1 = end.col - startCol;
+        if (r0 < 0 || c0 < 0) return;
+        mergeAnchors[r0 + ',' + c0] = { rowSpan: r1 - r0 + 1, colSpan: c1 - c0 + 1 };
+        for (let rr = r0; rr <= r1; rr++) {
+            for (let cc = c0; cc <= c1; cc++) {
+                if (rr === r0 && cc === c0) continue;
+                mergeCovered.add(rr + ',' + cc);
+            }
+        }
+    });
 }
 
 // A cell's dataValidation() formula1 is either a literal quoted list
@@ -260,8 +316,11 @@ function renderGrid() {
     gridData.forEach((row, r) => {
         html += '<tr>';
         row.forEach((cell, c) => {
+            if (mergeCovered.has(r + ',' + c)) return;
+            const span = mergeAnchors[r + ',' + c];
+            const spanAttrs = span ? (' rowspan="' + span.rowSpan + '" colspan="' + span.colSpan + '"') : '';
             const options = (validationMap && validationMap[r] && validationMap[r][c]) || null;
-            html += '<td style="padding:0; border:1px solid #888; vertical-align:top;">';
+            html += '<td' + spanAttrs + ' style="padding:0; border:1px solid #888; vertical-align:top;">';
             if (options) {
                 html += '<select onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" style="border:none; padding:6px 8px; font-size:13px; width:130px; min-width:130px;">';
                 html += '<option value=""' + (cell === '' ? ' selected' : '') + '></option>';
