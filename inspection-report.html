@@ -145,7 +145,7 @@ function loadSheetFromWorkbook(sheetIndex) {
 
     validationMap = gridData.map((row, r) => row.map((cellVal, c) => {
         let dv = null;
-        try { dv = used.cell(r + 1, c + 1).dataValidation(); } catch (e) { dv = null; }
+        try { dv = used.cell(r, c).dataValidation(); } catch (e) { dv = null; }
         return (dv && dv.type === 'list') ? resolveListOptions(dv.formula1, sheet) : null;
     }));
 
