@@ -252,27 +252,36 @@ function toggleFabStepEditRow(id) {
 // So a newly-added format also needs to be backfilled onto every job that
 // already exists for this step/process, or it silently never shows up on
 // Job Status for jobs created before the format was attached.
+// Copies the master template into a report ONLY if it has no file yet (never
+// filled, or a currently-empty report) — never overwrites a report that
+// already has real entered data.
+async function copyTemplateIntoReportIfEmpty(formatId, reportId, hasFile) {
+    if (hasFile) return;
+    const { data: fmt } = await supabaseClient.from('pr_inspection_formats_master').select('template_file_path, template_file_name').eq('id', formatId).maybeSingle();
+    if (fmt && fmt.template_file_path) {
+        const destPath = session.companyId + '/' + reportId + '/' + fmt.template_file_name;
+        const { error: copyError } = await supabaseClient.storage.from('inspection-sheets').copy(fmt.template_file_path, destPath);
+        if (!copyError) {
+            await supabaseClient.from('pr_inspection_reports').update({
+                file_path: destPath, file_name: fmt.template_file_name,
+                uploaded_by: 'Template (auto-attached)', uploaded_at: new Date().toISOString()
+            }).eq('id', reportId);
+        }
+    }
+}
+
 async function backfillFormatToExistingTrackings(formatId, trackingRows, sourceCol, linkTable) {
     for (const t of trackingRows) {
         let reportId;
-        const { data: existing } = await supabaseClient.from('pr_inspection_reports').select('id').eq('job_id', t.job_id).eq('format_id', formatId).maybeSingle();
+        const { data: existing } = await supabaseClient.from('pr_inspection_reports').select('id, file_path').eq('job_id', t.job_id).eq('format_id', formatId).maybeSingle();
         if (existing) {
             reportId = existing.id;
+            await copyTemplateIntoReportIfEmpty(formatId, reportId, !!existing.file_path);
         } else {
-            const { data: fmt } = await supabaseClient.from('pr_inspection_formats_master').select('template_file_path, template_file_name').eq('id', formatId).maybeSingle();
             const { data: report, error } = await supabaseClient.from('pr_inspection_reports').insert({ company_id: session.companyId, job_id: t.job_id, format_id: formatId }).select('id').single();
             if (error || !report) continue;
             reportId = report.id;
-            if (fmt && fmt.template_file_path) {
-                const destPath = session.companyId + '/' + reportId + '/' + fmt.template_file_name;
-                const { error: copyError } = await supabaseClient.storage.from('inspection-sheets').copy(fmt.template_file_path, destPath);
-                if (!copyError) {
-                    await supabaseClient.from('pr_inspection_reports').update({
-                        file_path: destPath, file_name: fmt.template_file_name,
-                        uploaded_by: 'Template (auto-attached)', uploaded_at: new Date().toISOString()
-                    }).eq('id', reportId);
-                }
-            }
+            await copyTemplateIntoReportIfEmpty(formatId, reportId, false);
         }
         const linkObj = { report_id: reportId };
         linkObj[sourceCol] = t.id;

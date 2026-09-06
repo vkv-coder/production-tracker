@@ -226,7 +226,6 @@ function renderGrid() {
     }
     if (report.file_path) {
         html += '<button class="pr-btn pr-btn-outline" onclick="downloadSheet()">Download Copy</button>';
-        html += '<button class="pr-btn pr-btn-danger" onclick="deleteSheet()">Clear Sheet</button>';
     }
     html += '</div>';
 
@@ -316,29 +315,6 @@ async function downloadSheet() {
     const { data, error } = await supabaseClient.storage.from('inspection-sheets').createSignedUrl(report.file_path, 300);
     if (error) { alert('Error: ' + error.message); return; }
     window.open(data.signedUrl, '_blank');
-}
-
-async function deleteSheet() {
-    if (!confirm('Clear the sheet for this step? This removes the saved file; the grid will reset to blank. This cannot be undone.')) return;
-    if (report.file_path) {
-        await supabaseClient.storage.from('inspection-sheets').remove([report.file_path]);
-    }
-    const { data: updated, error } = await supabaseClient
-        .from('pr_inspection_reports')
-        .update({ file_path: null, file_name: null, uploaded_by: null, uploaded_at: null })
-        .eq('id', report.id)
-        .select('*')
-        .single();
-    if (error) { alert('Error: ' + error.message); return; }
-    report = updated;
-    currentWorkbook = null;
-    usingAdvancedEngine = false;
-    usedFallback = false;
-    sheetNames = [];
-    currentSheetIndex = 0;
-    validationMap = null;
-    gridData = blankGrid();
-    renderGrid();
 }
 
 function escapeHtml(str) {
