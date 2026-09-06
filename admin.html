@@ -144,28 +144,33 @@ async function fetchActiveInspectors() {
     return data || [];
 }
 
-// Both "add" dropdowns together in one row right under Step Name/Order, so they're
-// always in the same spot regardless of how many chips are already assigned below —
-// no need to scroll past a growing chip list to reach the next picker.
-function renderPickerHeader(availableFmt, toggleFmtFnName, availableInsp, toggleInspFnName, entityId) {
-    let html = '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:8px;">';
-    html += '<div style="flex:1; min-width:200px;">';
-    html += '<label class="pr-label">Add Inspection Format</label>';
-    html += '<select class="pr-select" onchange="if(this.value){' + toggleFmtFnName + '(\'' + entityId + '\',this.value,true); this.value=\'\';}">';
-    html += '<option value="">-- Select format --</option>';
-    availableFmt.forEach(f => {
-        html += '<option value="' + f.id + '">' + escapeHtml(f.code) + ' — ' + escapeHtml(f.name) + '</option>';
+async function fetchActiveWorkers() {
+    const { data } = await supabaseClient.from('pr_workers').select('id, worker_name').eq('company_id', session.companyId).eq('is_active', true).order('worker_name');
+    return data || [];
+}
+
+// Native multi-select box: every active format listed as an option, currently
+// attached ones pre-selected. Ctrl/Cmd-click (or drag) to pick 3+ at once in one
+// control, instead of adding them one at a time. data-assigned tracks the
+// before-state so the onchange handler can diff it against the new selection.
+function renderFormatMultiSelect(allFormats, assignedSet, entityId, syncFnName) {
+    let html = '<label class="pr-label" style="margin-top:8px;">Inspection Formats (ctrl/cmd-click to select multiple)</label>';
+    html += '<select multiple class="pr-select" size="' + Math.min(6, Math.max(3, allFormats.length)) + '" data-assigned="' + Array.from(assignedSet).join(',') + '" onchange="' + syncFnName + '(\'' + entityId + '\', this)">';
+    allFormats.forEach(f => {
+        html += '<option value="' + f.id + '"' + (assignedSet.has(f.id) ? ' selected' : '') + '>' + escapeHtml(f.code) + ' — ' + escapeHtml(f.name) + '</option>';
     });
-    html += '</select></div>';
-    html += '<div style="flex:1; min-width:200px;">';
-    html += '<label class="pr-label">Add Default Inspector</label>';
-    html += '<select class="pr-select" onchange="if(this.value){' + toggleInspFnName + '(\'' + entityId + '\',this.value,true); this.value=\'\';}">';
+    html += '</select>';
+    return html;
+}
+
+function renderInspectorAddDropdown(availableInsp, toggleFnName, entityId) {
+    let html = '<label class="pr-label" style="margin-top:8px;">Add Default Inspector</label>';
+    html += '<select class="pr-select" onchange="if(this.value){' + toggleFnName + '(\'' + entityId + '\',this.value,true); this.value=\'\';}">';
     html += '<option value="">-- Select inspector --</option>';
     availableInsp.forEach(i => {
         html += '<option value="' + i.id + '">' + escapeHtml(i.inspector_name) + '</option>';
     });
-    html += '</select></div>';
-    html += '</div>';
+    html += '</select>';
     return html;
 }
 
@@ -215,12 +220,8 @@ async function loadFabSteps() {
         html += '<label class="pr-label">Order Number</label><input type="number" class="pr-input" id="fabStepOrder_' + s.id + '" value="' + s.step_order + '">';
         const fabAssignedFmtSet = new Set(stepFormats.map(x => x.format_id));
         const fabDefaultInspSet = new Set((s.pr_fab_step_default_inspectors || []).map(x => x.inspector_id));
-        html += renderPickerHeader(
-            formats.filter(f => !fabAssignedFmtSet.has(f.id)), 'toggleFabStepFormat',
-            inspectors.filter(i => !fabDefaultInspSet.has(i.id)), 'toggleFabStepDefaultInspector',
-            s.id
-        );
-        html += renderChipList('Attached Formats', formats.filter(f => fabAssignedFmtSet.has(f.id)), 'code', 'toggleFabStepFormat', s.id);
+        html += renderFormatMultiSelect(formats, fabAssignedFmtSet, s.id, 'syncFabStepFormats');
+        html += renderInspectorAddDropdown(inspectors.filter(i => !fabDefaultInspSet.has(i.id)), 'toggleFabStepDefaultInspector', s.id);
         html += renderChipList('Default Inspectors (auto-assigned to every new job)', inspectors.filter(i => fabDefaultInspSet.has(i.id)), 'inspector_name', 'toggleFabStepDefaultInspector', s.id);
         html += '<div style="display:flex; gap:8px; margin-top:8px;">';
         html += '<button class="pr-btn pr-btn-primary" onclick="saveFabStepEdit(\'' + s.id + '\',' + s.step_order + ')">Save Changes</button>';
@@ -240,11 +241,16 @@ function toggleFabStepEditRow(id) {
     if (opening) openFabStepIds.add(id); else openFabStepIds.delete(id);
 }
 
-async function toggleFabStepFormat(fabStepId, formatId, checked) {
-    if (checked) {
+async function syncFabStepFormats(fabStepId, selectEl) {
+    const selected = new Set(Array.from(selectEl.selectedOptions).map(o => o.value));
+    const before = new Set((selectEl.dataset.assigned || '').split(',').filter(Boolean));
+    const toAdd = [...selected].filter(id => !before.has(id));
+    const toRemove = [...before].filter(id => !selected.has(id));
+    for (const formatId of toAdd) {
         const { error } = await supabaseClient.from('pr_fab_step_formats').insert({ fab_step_id: fabStepId, format_id: formatId });
         if (error) { alert('Error: ' + error.message); return; }
-    } else {
+    }
+    for (const formatId of toRemove) {
         const { error } = await supabaseClient.from('pr_fab_step_formats').delete().eq('fab_step_id', fabStepId).eq('format_id', formatId);
         if (error) { alert('Error: ' + error.message); return; }
     }
@@ -438,12 +444,8 @@ async function loadPaintProcesses() {
         html += '<label class="pr-label">Order Number</label><input type="number" class="pr-input" id="processOrder_' + p.id + '" value="' + p.process_order + '">';
         const paintAssignedFmtSet = new Set(procFormats.map(x => x.format_id));
         const paintDefaultInspSet = new Set((p.pr_paint_process_default_inspectors || []).map(x => x.inspector_id));
-        html += renderPickerHeader(
-            formats.filter(f => !paintAssignedFmtSet.has(f.id)), 'toggleProcessFormat',
-            inspectors.filter(i => !paintDefaultInspSet.has(i.id)), 'toggleProcessDefaultInspector',
-            p.id
-        );
-        html += renderChipList('Attached Formats', formats.filter(f => paintAssignedFmtSet.has(f.id)), 'code', 'toggleProcessFormat', p.id);
+        html += renderFormatMultiSelect(formats, paintAssignedFmtSet, p.id, 'syncProcessFormats');
+        html += renderInspectorAddDropdown(inspectors.filter(i => !paintDefaultInspSet.has(i.id)), 'toggleProcessDefaultInspector', p.id);
         html += renderChipList('Default Inspectors (auto-assigned to every new job)', inspectors.filter(i => paintDefaultInspSet.has(i.id)), 'inspector_name', 'toggleProcessDefaultInspector', p.id);
         html += '<div style="display:flex; gap:8px; margin-top:8px;">';
         html += '<button class="pr-btn pr-btn-primary" onclick="saveProcessEdit(\'' + p.id + '\',\'' + itemId + '\',' + p.process_order + ')">Save Changes</button>';
@@ -463,11 +465,16 @@ function toggleProcessEditRow(id) {
     if (opening) openProcessIds.add(id); else openProcessIds.delete(id);
 }
 
-async function toggleProcessFormat(processId, formatId, checked) {
-    if (checked) {
+async function syncProcessFormats(processId, selectEl) {
+    const selected = new Set(Array.from(selectEl.selectedOptions).map(o => o.value));
+    const before = new Set((selectEl.dataset.assigned || '').split(',').filter(Boolean));
+    const toAdd = [...selected].filter(id => !before.has(id));
+    const toRemove = [...before].filter(id => !selected.has(id));
+    for (const formatId of toAdd) {
         const { error } = await supabaseClient.from('pr_paint_process_formats').insert({ process_id: processId, format_id: formatId });
         if (error) { alert('Error: ' + error.message); return; }
-    } else {
+    }
+    for (const formatId of toRemove) {
         const { error } = await supabaseClient.from('pr_paint_process_formats').delete().eq('process_id', processId).eq('format_id', formatId);
         if (error) { alert('Error: ' + error.message); return; }
     }
@@ -723,36 +730,43 @@ async function deleteWorker(workerId, workerName) {
 async function loadJobsAdmin() {
     const container = document.getElementById('jobsList');
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
-    const [{ data, error }, { data: units }, inspectors] = await Promise.all([
+    const [{ data, error }, { data: units }, inspectors, workers] = await Promise.all([
         supabaseClient.from('pr_jobs').select('*, pr_units(unit_name)').eq('company_id', session.companyId).order('created_at', { ascending: false }),
         supabaseClient.from('pr_units').select('id, unit_name').eq('company_id', session.companyId).eq('is_active', true).order('unit_name'),
-        fetchActiveInspectors()
+        fetchActiveInspectors(),
+        fetchActiveWorkers()
     ]);
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
     if (!data || data.length === 0) { container.innerHTML = '<p class="pr-empty">No jobs found.</p>'; return; }
 
-    let html = '<table class="pr-table"><tr><th>Job No.</th><th>Customer</th><th>Status</th><th></th></tr>';
+    let html = '<table class="pr-table"><tr><th>Job No.</th><th>Customer</th><th>Worker</th><th>Overall Incharge</th><th>Status</th><th></th></tr>';
     data.forEach(j => {
         const jsJobNo = j.job_no.replace(/'/g, "\\'");
-        html += '<tr><td>' + escapeHtml(j.job_no) + '</td><td>' + escapeHtml(j.customer_name || '-') + '</td><td>' + escapeHtml(j.status || '-') + '</td>';
+        html += '<tr><td>' + escapeHtml(j.job_no) + '</td><td>' + escapeHtml(j.customer_name || '-') + '</td>';
+        html += '<td><select class="pr-select" onchange="updateJobWorker(\'' + j.id + '\',this.value)"><option value="">-- None --</option>';
+        workers.forEach(w => {
+            html += '<option value="' + w.id + '"' + (j.worker_id === w.id ? ' selected' : '') + '>' + escapeHtml(w.worker_name) + '</option>';
+        });
+        html += '</select></td>';
+        html += '<td><select class="pr-select" onchange="updateJobSupervisor(\'' + j.id + '\',this.value)"><option value="">-- None --</option>';
+        inspectors.forEach(i => {
+            html += '<option value="' + i.id + '"' + (j.supervisor_inspector_id === i.id ? ' selected' : '') + '>' + escapeHtml(i.inspector_name) + '</option>';
+        });
+        html += '</select></td>';
+        html += '<td>' + escapeHtml(j.status || '-') + '</td>';
         html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
         html += '<button class="pr-btn pr-btn-outline" onclick="toggleJobEditRow(\'' + j.id + '\')">Edit</button>';
         html += '<button class="pr-btn pr-btn-danger" onclick="deleteJob(\'' + j.id + '\',\'' + jsJobNo + '\')">Delete</button>';
         html += '</td></tr>';
 
-        html += '<tr id="jobEditRow_' + j.id + '" style="display:none;"><td colspan="4">';
+        html += '<tr id="jobEditRow_' + j.id + '" style="display:none;"><td colspan="6">';
         html += '<div class="pr-card">';
         html += '<label class="pr-label">Job No.</label><input type="text" class="pr-input" id="jobNo_' + j.id + '" value="' + escapeHtml(j.job_no) + '">';
         html += '<label class="pr-label">Customer</label><input type="text" class="pr-input" id="jobCust_' + j.id + '" value="' + escapeHtml(j.customer_name || '') + '">';
         html += '<label class="pr-label">Unit</label><select class="pr-select" id="jobUnit_' + j.id + '"><option value="">-- None --</option>';
         (units || []).forEach(u => {
             html += '<option value="' + u.id + '"' + (j.unit_id === u.id ? ' selected' : '') + '>' + escapeHtml(u.unit_name) + '</option>';
-        });
-        html += '</select>';
-        html += '<label class="pr-label">Supervisor (sees all sub-processes as Partner)</label><select class="pr-select" id="jobSupervisor_' + j.id + '"><option value="">-- None --</option>';
-        inspectors.forEach(i => {
-            html += '<option value="' + i.id + '"' + (j.supervisor_inspector_id === i.id ? ' selected' : '') + '>' + escapeHtml(i.inspector_name) + '</option>';
         });
         html += '</select>';
         html += '<label class="pr-label">Description / Qty</label><textarea class="pr-input" rows="2" id="jobDesc_' + j.id + '">' + escapeHtml(j.description || '') + '</textarea>';
@@ -771,6 +785,16 @@ async function loadJobsAdmin() {
     container.innerHTML = html;
 }
 
+async function updateJobWorker(jobId, workerId) {
+    const { error } = await supabaseClient.from('pr_jobs').update({ worker_id: workerId || null }).eq('id', jobId);
+    if (error) { alert('Error: ' + error.message); }
+}
+
+async function updateJobSupervisor(jobId, inspectorId) {
+    const { error } = await supabaseClient.from('pr_jobs').update({ supervisor_inspector_id: inspectorId || null }).eq('id', jobId);
+    if (error) { alert('Error: ' + error.message); }
+}
+
 function toggleJobEditRow(jobId) {
     const row = document.getElementById('jobEditRow_' + jobId);
     row.style.display = (row.style.display === 'none') ? 'table-row' : 'none';
@@ -780,10 +804,9 @@ async function saveJobEdit(jobId) {
     const jobNo = document.getElementById('jobNo_' + jobId).value.trim();
     const customer = document.getElementById('jobCust_' + jobId).value.trim();
     const unitId = document.getElementById('jobUnit_' + jobId).value;
-    const supervisorId = document.getElementById('jobSupervisor_' + jobId).value;
     const desc = document.getElementById('jobDesc_' + jobId).value.trim();
     const status = document.getElementById('jobStatus_' + jobId).value;
-    const { error } = await supabaseClient.from('pr_jobs').update({ job_no: jobNo, customer_name: customer || null, unit_id: unitId || null, supervisor_inspector_id: supervisorId || null, description: desc || null, status: status }).eq('id', jobId);
+    const { error } = await supabaseClient.from('pr_jobs').update({ job_no: jobNo, customer_name: customer || null, unit_id: unitId || null, description: desc || null, status: status }).eq('id', jobId);
     if (error) { alert('Error: ' + error.message); return; }
     alert('Saved');
     loadJobsAdmin();

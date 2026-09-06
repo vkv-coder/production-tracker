@@ -65,7 +65,6 @@ const jobId = urlParams.get('job');
 
 let inspectorsList = [];
 let workersList = [];
-let formatsList = [];
 let paintItems = [];
 let currentPaintItemId = null;
 
@@ -85,42 +84,7 @@ async function init() {
     const { data: items } = await supabaseClient.from('pr_paint_items_master').select('id, item_name').eq('company_id', session.companyId).eq('is_active', true);
     paintItems = items || [];
 
-    const { data: fmts } = await supabaseClient.from('pr_inspection_formats_master').select('id, code, name').eq('company_id', session.companyId).eq('is_active', true).order('code');
-    formatsList = fmts || [];
-
     loadFabTable();
-}
-
-async function attachFormatToTracking(formatId, sourceCol, trackingId) {
-    const linkTable = sourceCol === 'fab_tracking_id' ? 'pr_fab_tracking_reports' : 'pr_paint_tracking_reports';
-
-    let reportId;
-    const { data: existing } = await supabaseClient.from('pr_inspection_reports').select('id').eq('job_id', jobId).eq('format_id', formatId).maybeSingle();
-    if (existing) {
-        reportId = existing.id;
-    } else {
-        const { data: fmt } = await supabaseClient.from('pr_inspection_formats_master').select('template_file_path, template_file_name').eq('id', formatId).maybeSingle();
-        const { data: report, error } = await supabaseClient.from('pr_inspection_reports').insert({ company_id: session.companyId, job_id: jobId, format_id: formatId }).select('id').single();
-        if (error || !report) { alert('Error creating report: ' + (error ? error.message : 'unknown')); return false; }
-        reportId = report.id;
-
-        if (fmt && fmt.template_file_path) {
-            const destPath = session.companyId + '/' + reportId + '/' + fmt.template_file_name;
-            const { error: copyError } = await supabaseClient.storage.from('inspection-sheets').copy(fmt.template_file_path, destPath);
-            if (!copyError) {
-                await supabaseClient.from('pr_inspection_reports').update({
-                    file_path: destPath, file_name: fmt.template_file_name,
-                    uploaded_by: 'Template (auto-attached)', uploaded_at: new Date().toISOString()
-                }).eq('id', reportId);
-            }
-        }
-    }
-
-    const linkObj = { report_id: reportId };
-    linkObj[sourceCol] = trackingId;
-    const { error: linkError } = await supabaseClient.from(linkTable).insert(linkObj);
-    if (linkError && linkError.code !== '23505') { alert('Error linking format: ' + linkError.message); return false; }
-    return true;
 }
 
 async function uploadProcessImage(inputEl, sourceCol, trackingId, reloadFn) {
@@ -286,23 +250,14 @@ async function loadFabTable() {
         html += '<div class="pr-card-title">' + (r.pr_fab_steps_master?.step_order || '') + '. ' + (r.pr_fab_steps_master?.step_name || '') + (delayed ? ' <span style="color:#dc3545; font-size:12px;">&#9888; Delayed</span>' : '') + '</div>';
 
         const fabLinks = reportLinksMap[r.id] || [];
-        const fabLinkedFmtIds = new Set(fabLinks.map(l => l.formatId));
-        const fabAvailableFmts = formatsList.filter(f => !fabLinkedFmtIds.has(f.id));
         html += '<label class="pr-label" style="margin-top:6px;">Inspection Formats</label>';
         html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 6px;">';
         if (fabLinks.length === 0) html += '<span style="font-size:12px; color:#999;">None attached</span>';
         fabLinks.forEach(l => {
             html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' +
-                '<a href="inspection-report.html?job=' + jobId + '&report=' + l.reportId + '" style="color:#1e3a5f;">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a>' +
-                '<span style="cursor:pointer; font-weight:bold;" onclick="removeFabFormat(\'' + r.id + '\',\'' + l.reportId + '\')">&times;</span></span>';
+                '<a href="inspection-report.html?job=' + jobId + '&report=' + l.reportId + '" style="color:#1e3a5f;">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a></span>';
         });
         html += '</div>';
-        if (fabAvailableFmts.length > 0) {
-            html += '<select class="pr-select" onchange="if(this.value){addFabFormat(\'' + r.id + '\',this.value); this.value=\'\';}">';
-            html += '<option value="">-- Add format --</option>';
-            fabAvailableFmts.forEach(f => { html += '<option value="' + f.id + '">' + escapeHtml(f.code) + ' — ' + escapeHtml(f.name) + '</option>'; });
-            html += '</select>';
-        }
 
         const fabImages = imagesMap[r.id] || [];
         html += '<label class="pr-label" style="margin-top:8px;">Images</label>';
@@ -441,17 +396,6 @@ async function toggleFabInspector(trackingId, inspectorId, checked) {
     loadFabTable();
 }
 
-async function addFabFormat(trackingId, formatId) {
-    const ok = await attachFormatToTracking(formatId, 'fab_tracking_id', trackingId);
-    if (ok) loadFabTable();
-}
-
-async function removeFabFormat(trackingId, reportId) {
-    const { error } = await supabaseClient.from('pr_fab_tracking_reports').delete().eq('fab_tracking_id', trackingId).eq('report_id', reportId);
-    if (error) { alert('Error: ' + error.message); return; }
-    loadFabTable();
-}
-
 function escapeHtml(str) {
     return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -549,23 +493,14 @@ async function loadPaintTable() {
         html += '<div class="pr-card-title">' + (r.pr_paint_process_master?.process_order || '') + '. ' + (r.pr_paint_process_master?.process_name || '') + '</div>';
 
         const paintLinks = paintReportLinksMap[r.id] || [];
-        const paintLinkedFmtIds = new Set(paintLinks.map(l => l.formatId));
-        const paintAvailableFmts = formatsList.filter(f => !paintLinkedFmtIds.has(f.id));
         html += '<label class="pr-label" style="margin-top:6px;">Inspection Formats</label>';
         html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 6px;">';
         if (paintLinks.length === 0) html += '<span style="font-size:12px; color:#999;">None attached</span>';
         paintLinks.forEach(l => {
             html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' +
-                '<a href="inspection-report.html?job=' + jobId + '&report=' + l.reportId + '" style="color:#1e3a5f;">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a>' +
-                '<span style="cursor:pointer; font-weight:bold;" onclick="removePaintFormat(\'' + r.id + '\',\'' + l.reportId + '\')">&times;</span></span>';
+                '<a href="inspection-report.html?job=' + jobId + '&report=' + l.reportId + '" style="color:#1e3a5f;">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a></span>';
         });
         html += '</div>';
-        if (paintAvailableFmts.length > 0) {
-            html += '<select class="pr-select" onchange="if(this.value){addPaintFormat(\'' + r.id + '\',this.value); this.value=\'\';}">';
-            html += '<option value="">-- Add format --</option>';
-            paintAvailableFmts.forEach(f => { html += '<option value="' + f.id + '">' + escapeHtml(f.code) + ' — ' + escapeHtml(f.name) + '</option>'; });
-            html += '</select>';
-        }
 
         const paintProcImages = paintImagesMap[r.id] || [];
         html += '<label class="pr-label" style="margin-top:8px;">Images</label>';
@@ -664,16 +599,6 @@ async function togglePaintInspector(trackingId, inspectorId, checked) {
     loadPaintTable();
 }
 
-async function addPaintFormat(trackingId, formatId) {
-    const ok = await attachFormatToTracking(formatId, 'paint_tracking_id', trackingId);
-    if (ok) loadPaintTable();
-}
-
-async function removePaintFormat(trackingId, reportId) {
-    const { error } = await supabaseClient.from('pr_paint_tracking_reports').delete().eq('paint_tracking_id', trackingId).eq('report_id', reportId);
-    if (error) { alert('Error: ' + error.message); return; }
-    loadPaintTable();
-}
 
 async function updatePaintField(trackingId, field, value) {
     const updateObj = {};
