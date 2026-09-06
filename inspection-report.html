@@ -82,6 +82,16 @@ function blankGrid() {
     return Array.from({ length: 8 }, () => Array(6).fill(''));
 }
 
+// A hung promise never rejects, so a plain try/catch around it shows nothing
+// at all if it stalls — race it against a timeout so a stuck read/write
+// surfaces as a visible error instead of looking like the button did nothing.
+function withTimeout(promise, ms, label) {
+    return Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error(label + ' timed out after ' + (ms / 1000) + 's')), ms))
+    ]);
+}
+
 async function loadSheetIntoGrid() {
     const container = document.getElementById('reportCard');
     container.innerHTML = '<p class="pr-empty">Loading sheet...</p>';
@@ -102,7 +112,7 @@ async function loadSheetIntoGrid() {
             return;
         }
         try {
-            currentWorkbook = await XlsxPopulate.fromDataAsync(blob);
+            currentWorkbook = await withTimeout(XlsxPopulate.fromDataAsync(blob), 20000, 'Reading file');
             sheetNames = currentWorkbook.sheets().map(s => s.name());
             usingAdvancedEngine = true;
             loadSheetFromWorkbook(0);
@@ -235,7 +245,7 @@ function renderGrid() {
     }
 
     html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">';
-    html += '<button class="pr-btn pr-btn-primary" onclick="saveSheetGrid()">Save</button>';
+    html += '<button class="pr-btn pr-btn-primary" id="saveSheetBtn" onclick="saveSheetGrid()">Save</button>';
     if (!usingAdvancedEngine) {
         html += '<button class="pr-btn pr-btn-outline" onclick="addRow()">+ Row Above Cursor</button>';
         html += '<button class="pr-btn pr-btn-outline" onclick="addColumn()">+ Column Before Cursor</button>';
@@ -301,10 +311,14 @@ function addColumn() {
 }
 
 async function saveSheetGrid() {
+    const btn = document.getElementById('saveSheetBtn');
+    const resetBtn = () => { if (btn) { btn.disabled = false; btn.textContent = 'Save'; } };
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+
     let blob;
     try {
         if (usingAdvancedEngine && currentWorkbook) {
-            blob = await currentWorkbook.outputAsync();
+            blob = await withTimeout(currentWorkbook.outputAsync(), 20000, 'Preparing file');
         } else {
             const ws = XLSX.utils.aoa_to_sheet(gridData);
             const wb = XLSX.utils.book_new();
@@ -314,6 +328,7 @@ async function saveSheetGrid() {
         }
     } catch (e) {
         alert('Error preparing file to save: ' + (e && e.message ? e.message : e));
+        resetBtn();
         return;
     }
 
@@ -321,7 +336,7 @@ async function saveSheetGrid() {
     const path = session.companyId + '/' + report.id + '/' + fileName;
 
     const { error: uploadError } = await supabaseClient.storage.from('inspection-sheets').upload(path, blob, { upsert: true });
-    if (uploadError) { alert('Error saving: ' + uploadError.message); return; }
+    if (uploadError) { alert('Error saving: ' + uploadError.message); resetBtn(); return; }
 
     const { data: updated, error } = await supabaseClient
         .from('pr_inspection_reports')
@@ -329,7 +344,7 @@ async function saveSheetGrid() {
         .eq('id', report.id)
         .select('*')
         .single();
-    if (error) { alert('Error saving: ' + error.message); return; }
+    if (error) { alert('Error saving: ' + error.message); resetBtn(); return; }
 
     report = updated;
     renderGrid();
