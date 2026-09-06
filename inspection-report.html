@@ -9,6 +9,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx-populate@1.21.0/browser/xlsx-populate-no-encryption.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
 <body>
 
@@ -107,6 +108,7 @@ async function loadSheetIntoGrid() {
     mergeAnchors = {};
     mergeCovered = new Set();
     colWidths = [];
+    rawValidationsBySheet = {};
 
     if (report.file_path) {
         const { data: blob, error } = await supabaseClient.storage.from('inspection-sheets').download(report.file_path);
@@ -118,6 +120,7 @@ async function loadSheetIntoGrid() {
             currentWorkbook = await withTimeout(XlsxPopulate.fromDataAsync(blob), 20000, 'Reading file');
             sheetNames = currentWorkbook.sheets().map(s => s.name());
             usingAdvancedEngine = true;
+            await extractValidationsFromXlsx(blob);
             loadSheetFromWorkbook(0);
             return;
         } catch (e) {
@@ -166,25 +169,92 @@ function loadSheetFromWorkbook(sheetIndex) {
     const mergeDiagnostic = buildMergeMaps(sheet, used);
     buildColumnWidths(sheet, used);
 
-    let validationCheckError = '';
+    const startCell = used.startCell();
+    const startRow = startCell.rowNumber();
+    const startCol = startCell.columnNumber();
+    const rawEntries = rawValidationsBySheet[sheet.name()] || [];
+
     let dropdownCellCount = 0;
     validationMap = gridData.map((row, r) => row.map((cellVal, c) => {
         // Only ever skip a cell as "merge covered" if it's genuinely blank —
         // never let a possibly-wrong merge parse hide real content/a dropdown.
         if (mergeCovered.has(r + ',' + c) && cellVal === '') return null;
-        let dv = null;
-        try { dv = used.cell(r, c).dataValidation(); } catch (e) { if (!validationCheckError) validationCheckError = (e && e.message) ? e.message : String(e); return null; }
-        const opts = (dv && dv.type === 'list') ? resolveListOptions(dv.formula1, sheet) : null;
+        const absRow = startRow + r, absCol = startCol + c;
+        const match = rawEntries.find(entry => isAddressInSqref(absRow, absCol, entry.sqref));
+        if (!match) return null;
+        const opts = resolveListOptions(match.formula1, sheet);
         if (opts) dropdownCellCount++;
         return opts;
     }));
     const dimNote = gridData.length + ' rows x ' + (gridData[0] ? gridData[0].length : 0) + ' cols detected';
-    validationDiagnostic = (validationCheckError
-        ? ('dropdown check failed: ' + validationCheckError)
-        : (dropdownCellCount === 0 ? 'no dropdown-list validations found on this sheet' : (dropdownCellCount + ' dropdown cell(s) detected'))
-    ) + ' | ' + dimNote + ' | ' + mergeDiagnostic;
+    validationDiagnostic = (rawEntries.length === 0 ? 'no list validations found in raw XML for this sheet' : (rawEntries.length + ' list validation rule(s) in XML, ' + dropdownCellCount + ' cell(s) matched'))
+        + ' | ' + dimNote + ' | ' + mergeDiagnostic;
 
     renderGrid();
+}
+
+// cell.dataValidation() from the library repeatedly failed to detect a real,
+// confirmed dropdown-list column, so read validations straight from the raw
+// worksheet XML instead (the ground truth OOXML format) rather than trust
+// that API further. rawValidationsBySheet[sheetName] is built once per file
+// load by extractValidationsFromXlsx, as a list of { sqref, formula1 } pulled
+// directly from each sheet's <dataValidation type="list"> nodes.
+let rawValidationsBySheet = {};
+
+function isAddressInSqref(absRow, absCol, sqref) {
+    return sqref.split(/\s+/).some(part => {
+        const bits = part.split(':');
+        const start = parseCellRef(bits[0]);
+        if (!start) return false;
+        const end = bits[1] ? parseCellRef(bits[1]) : start;
+        if (!end) return false;
+        const minRow = Math.min(start.row, end.row), maxRow = Math.max(start.row, end.row);
+        const minCol = Math.min(start.col, end.col), maxCol = Math.max(start.col, end.col);
+        return absRow >= minRow && absRow <= maxRow && absCol >= minCol && absCol <= maxCol;
+    });
+}
+
+async function extractValidationsFromXlsx(blob) {
+    rawValidationsBySheet = {};
+    try {
+        const zip = await JSZip.loadAsync(blob);
+        const parser = new DOMParser();
+
+        const workbookXmlFile = zip.file('xl/workbook.xml');
+        if (!workbookXmlFile) return;
+        const workbookDoc = parser.parseFromString(await workbookXmlFile.async('string'), 'application/xml');
+        const sheetNodes = Array.from(workbookDoc.getElementsByTagName('sheet'));
+
+        const relsMap = {};
+        const relsFile = zip.file('xl/_rels/workbook.xml.rels');
+        if (relsFile) {
+            const relsDoc = parser.parseFromString(await relsFile.async('string'), 'application/xml');
+            Array.from(relsDoc.getElementsByTagName('Relationship')).forEach(rel => {
+                relsMap[rel.getAttribute('Id')] = rel.getAttribute('Target');
+            });
+        }
+
+        for (const sheetNode of sheetNodes) {
+            const name = sheetNode.getAttribute('name');
+            const rId = sheetNode.getAttribute('r:id') || sheetNode.getAttribute('id');
+            const target = relsMap[rId];
+            if (!name || !target) continue;
+            const sheetFile = zip.file('xl/' + target);
+            if (!sheetFile) continue;
+            const sheetDoc = parser.parseFromString(await sheetFile.async('string'), 'application/xml');
+            const entries = [];
+            Array.from(sheetDoc.getElementsByTagName('dataValidation')).forEach(dv => {
+                if (dv.getAttribute('type') !== 'list') return;
+                const sqref = dv.getAttribute('sqref');
+                const f1Node = dv.getElementsByTagName('formula1')[0];
+                const formula1 = f1Node ? f1Node.textContent : null;
+                if (sqref && formula1) entries.push({ sqref, formula1 });
+            });
+            rawValidationsBySheet[name] = entries;
+        }
+    } catch (e) {
+        rawValidationsBySheet = {};
+    }
 }
 
 // Merged header/label cells in the original file (e.g. a 2-column-wide "Total
@@ -363,16 +433,22 @@ function renderGrid() {
             let cellWidth = colWidths[c] || 130;
             if (span) { for (let k = 1; k < span.colSpan; k++) cellWidth += (colWidths[c + k] || 130); }
             const options = (validationMap && validationMap[r] && validationMap[r][c]) || null;
+            // Dropdown cells are the form's designated inspector-input fields
+            // (OK/NOT OK etc.) — highlight them while still blank so it's
+            // obvious at a glance what still needs filling in.
+            const needsInput = !!options && cell === '';
+            const inputStyle = needsInput ? ' background:#fff3b0;' : '';
+            const cellId = 'cell_' + r + '_' + c;
             html += '<td' + spanAttrs + ' style="padding:0; border:1px solid #888; vertical-align:top;">';
             if (options) {
-                html += '<select onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" style="border:none; padding:6px 8px; font-size:13px; width:' + cellWidth + 'px; min-width:' + cellWidth + 'px;">';
+                html += '<select id="' + cellId + '" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" onkeydown="handleCellKeydown(event,' + r + ',' + c + ')" style="border:none; padding:6px 8px; font-size:13px; width:' + cellWidth + 'px; min-width:' + cellWidth + 'px;' + inputStyle + '">';
                 html += '<option value=""' + (cell === '' ? ' selected' : '') + '></option>';
                 options.forEach(opt => {
                     html += '<option value="' + escapeHtml(opt) + '"' + (cell === opt ? ' selected' : '') + '>' + escapeHtml(opt) + '</option>';
                 });
                 html += '</select>';
             } else {
-                html += '<textarea rows="1" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" oninput="autoGrowCell(this)" style="border:none; padding:6px 8px; font-size:13px; width:' + cellWidth + 'px; min-width:' + cellWidth + 'px; white-space:pre-wrap; overflow-wrap:break-word; resize:none; overflow:hidden; font-family:inherit; display:block;">' + escapeHtml(cell) + '</textarea>';
+                html += '<textarea id="' + cellId + '" rows="1" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" onkeydown="handleCellKeydown(event,' + r + ',' + c + ')" oninput="autoGrowCell(this)" style="border:none; padding:6px 8px; font-size:13px; width:' + cellWidth + 'px; min-width:' + cellWidth + 'px; white-space:pre-wrap; overflow-wrap:break-word; resize:none; overflow:hidden; font-family:inherit; display:block;' + inputStyle + '">' + escapeHtml(cell) + '</textarea>';
             }
             html += '</td>';
         });
@@ -393,10 +469,43 @@ function updateCell(r, c, value) {
             alert('Could not record this edit into the file: ' + (e && e.message ? e.message : e));
         }
     }
+    // Drop the "needs input" highlight the moment a dropdown is filled, without
+    // waiting for a full re-render.
+    const el = document.getElementById('cell_' + r + '_' + c);
+    if (el && el.tagName === 'SELECT') {
+        el.style.background = value === '' ? '#fff3b0' : '';
+    }
 }
 
 function setActiveCell(r, c) {
     activeCell = { r: r, c: c };
+}
+
+function focusCell(r, c) {
+    const el = document.getElementById('cell_' + r + '_' + c);
+    if (el) {
+        el.focus();
+        if (el.tagName === 'TEXTAREA' && el.select) { try { el.select(); } catch (e) {} }
+    }
+}
+
+// Arrow keys jump between cells like a real spreadsheet instead of just
+// moving the text cursor within one field — skips over merge-covered
+// positions (which have no rendered element) in the direction of travel.
+function handleCellKeydown(e, r, c) {
+    let dr = 0, dc = 0;
+    if (e.key === 'ArrowUp') dr = -1;
+    else if (e.key === 'ArrowDown') dr = 1;
+    else if (e.key === 'ArrowLeft') dc = -1;
+    else if (e.key === 'ArrowRight') dc = 1;
+    else return;
+    e.preventDefault();
+    const maxRows = gridData.length, maxCols = gridData[0] ? gridData[0].length : 0;
+    let nr = r + dr, nc = c + dc;
+    while (nr >= 0 && nr < maxRows && nc >= 0 && nc < maxCols) {
+        if (document.getElementById('cell_' + nr + '_' + nc)) { focusCell(nr, nc); return; }
+        nr += dr; nc += dc;
+    }
 }
 
 function addRow() {
