@@ -144,45 +144,41 @@ async function fetchActiveInspectors() {
     return data || [];
 }
 
-function renderDefaultInspectorPicker(assignedInsp, availableInsp, toggleFnName, entityId) {
-    let html = '<label class="pr-label" style="margin-top:8px;">Default Inspectors (auto-assigned to every new job)</label>';
-    html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 6px;">';
-    if (assignedInsp.length === 0) {
-        html += '<span style="font-size:12px; color:#999;">None</span>';
-    }
-    assignedInsp.forEach(i => {
-        html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' + escapeHtml(i.inspector_name) + '<span style="cursor:pointer; font-weight:bold;" onclick="' + toggleFnName + '(\'' + entityId + '\',\'' + i.id + '\',false)">&times;</span></span>';
+// Both "add" dropdowns together in one row right under Step Name/Order, so they're
+// always in the same spot regardless of how many chips are already assigned below —
+// no need to scroll past a growing chip list to reach the next picker.
+function renderPickerHeader(availableFmt, toggleFmtFnName, availableInsp, toggleInspFnName, entityId) {
+    let html = '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:8px;">';
+    html += '<div style="flex:1; min-width:200px;">';
+    html += '<label class="pr-label">Add Inspection Format</label>';
+    html += '<select class="pr-select" onchange="if(this.value){' + toggleFmtFnName + '(\'' + entityId + '\',this.value,true); this.value=\'\';}">';
+    html += '<option value="">-- Select format --</option>';
+    availableFmt.forEach(f => {
+        html += '<option value="' + f.id + '">' + escapeHtml(f.code) + ' — ' + escapeHtml(f.name) + '</option>';
     });
+    html += '</select></div>';
+    html += '<div style="flex:1; min-width:200px;">';
+    html += '<label class="pr-label">Add Default Inspector</label>';
+    html += '<select class="pr-select" onchange="if(this.value){' + toggleInspFnName + '(\'' + entityId + '\',this.value,true); this.value=\'\';}">';
+    html += '<option value="">-- Select inspector --</option>';
+    availableInsp.forEach(i => {
+        html += '<option value="' + i.id + '">' + escapeHtml(i.inspector_name) + '</option>';
+    });
+    html += '</select></div>';
     html += '</div>';
-    if (availableInsp.length > 0) {
-        html += '<select class="pr-select" onchange="if(this.value){' + toggleFnName + '(\'' + entityId + '\',this.value,true);}">';
-        html += '<option value="">-- Add default inspector --</option>';
-        availableInsp.forEach(i => {
-            html += '<option value="' + i.id + '">' + escapeHtml(i.inspector_name) + '</option>';
-        });
-        html += '</select>';
-    }
     return html;
 }
 
-function renderFormatPicker(assignedFmt, availableFmt, toggleFnName, entityId) {
-    let html = '<label class="pr-label" style="margin-top:8px;">Inspection Formats (attached to this step)</label>';
+function renderChipList(label, assignedItems, nameField, toggleFnName, entityId) {
+    let html = '<label class="pr-label" style="margin-top:8px;">' + label + '</label>';
     html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 6px;">';
-    if (assignedFmt.length === 0) {
+    if (assignedItems.length === 0) {
         html += '<span style="font-size:12px; color:#999;">None</span>';
     }
-    assignedFmt.forEach(f => {
-        html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' + escapeHtml(f.code) + '<span style="cursor:pointer; font-weight:bold;" onclick="' + toggleFnName + '(\'' + entityId + '\',\'' + f.id + '\',false)">&times;</span></span>';
+    assignedItems.forEach(item => {
+        html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' + escapeHtml(item[nameField]) + '<span style="cursor:pointer; font-weight:bold;" onclick="' + toggleFnName + '(\'' + entityId + '\',\'' + item.id + '\',false)">&times;</span></span>';
     });
     html += '</div>';
-    if (availableFmt.length > 0) {
-        html += '<select class="pr-select" onchange="if(this.value){' + toggleFnName + '(\'' + entityId + '\',this.value,true); this.value=\'\';}">';
-        html += '<option value="">-- Add format --</option>';
-        availableFmt.forEach(f => {
-            html += '<option value="' + f.id + '">' + escapeHtml(f.code) + ' — ' + escapeHtml(f.name) + '</option>';
-        });
-        html += '</select>';
-    }
     return html;
 }
 
@@ -218,17 +214,14 @@ async function loadFabSteps() {
         html += '<label class="pr-label">Step Name</label><input type="text" class="pr-input" id="fabStepName_' + s.id + '" value="' + escapeHtml(s.step_name) + '">';
         html += '<label class="pr-label">Order Number</label><input type="number" class="pr-input" id="fabStepOrder_' + s.id + '" value="' + s.step_order + '">';
         const fabAssignedFmtSet = new Set(stepFormats.map(x => x.format_id));
-        html += renderFormatPicker(
-            formats.filter(f => fabAssignedFmtSet.has(f.id)),
-            formats.filter(f => !fabAssignedFmtSet.has(f.id)),
-            'toggleFabStepFormat', s.id
-        );
         const fabDefaultInspSet = new Set((s.pr_fab_step_default_inspectors || []).map(x => x.inspector_id));
-        html += renderDefaultInspectorPicker(
-            inspectors.filter(i => fabDefaultInspSet.has(i.id)),
-            inspectors.filter(i => !fabDefaultInspSet.has(i.id)),
-            'toggleFabStepDefaultInspector', s.id
+        html += renderPickerHeader(
+            formats.filter(f => !fabAssignedFmtSet.has(f.id)), 'toggleFabStepFormat',
+            inspectors.filter(i => !fabDefaultInspSet.has(i.id)), 'toggleFabStepDefaultInspector',
+            s.id
         );
+        html += renderChipList('Attached Formats', formats.filter(f => fabAssignedFmtSet.has(f.id)), 'code', 'toggleFabStepFormat', s.id);
+        html += renderChipList('Default Inspectors (auto-assigned to every new job)', inspectors.filter(i => fabDefaultInspSet.has(i.id)), 'inspector_name', 'toggleFabStepDefaultInspector', s.id);
         html += '<div style="display:flex; gap:8px; margin-top:8px;">';
         html += '<button class="pr-btn pr-btn-primary" onclick="saveFabStepEdit(\'' + s.id + '\',' + s.step_order + ')">Save Changes</button>';
         html += '<button class="pr-btn pr-btn-outline" onclick="toggleFabStepEditRow(\'' + s.id + '\')">Cancel</button>';
@@ -444,17 +437,14 @@ async function loadPaintProcesses() {
         html += '<label class="pr-label">Process Name</label><input type="text" class="pr-input" id="processName_' + p.id + '" value="' + escapeHtml(p.process_name) + '">';
         html += '<label class="pr-label">Order Number</label><input type="number" class="pr-input" id="processOrder_' + p.id + '" value="' + p.process_order + '">';
         const paintAssignedFmtSet = new Set(procFormats.map(x => x.format_id));
-        html += renderFormatPicker(
-            formats.filter(f => paintAssignedFmtSet.has(f.id)),
-            formats.filter(f => !paintAssignedFmtSet.has(f.id)),
-            'toggleProcessFormat', p.id
-        );
         const paintDefaultInspSet = new Set((p.pr_paint_process_default_inspectors || []).map(x => x.inspector_id));
-        html += renderDefaultInspectorPicker(
-            inspectors.filter(i => paintDefaultInspSet.has(i.id)),
-            inspectors.filter(i => !paintDefaultInspSet.has(i.id)),
-            'toggleProcessDefaultInspector', p.id
+        html += renderPickerHeader(
+            formats.filter(f => !paintAssignedFmtSet.has(f.id)), 'toggleProcessFormat',
+            inspectors.filter(i => !paintDefaultInspSet.has(i.id)), 'toggleProcessDefaultInspector',
+            p.id
         );
+        html += renderChipList('Attached Formats', formats.filter(f => paintAssignedFmtSet.has(f.id)), 'code', 'toggleProcessFormat', p.id);
+        html += renderChipList('Default Inspectors (auto-assigned to every new job)', inspectors.filter(i => paintDefaultInspSet.has(i.id)), 'inspector_name', 'toggleProcessDefaultInspector', p.id);
         html += '<div style="display:flex; gap:8px; margin-top:8px;">';
         html += '<button class="pr-btn pr-btn-primary" onclick="saveProcessEdit(\'' + p.id + '\',\'' + itemId + '\',' + p.process_order + ')">Save Changes</button>';
         html += '<button class="pr-btn pr-btn-outline" onclick="toggleProcessEditRow(\'' + p.id + '\')">Cancel</button>';
