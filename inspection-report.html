@@ -162,7 +162,7 @@ function loadSheetFromWorkbook(sheetIndex) {
     gridData = rawValues.map(row => (Array.isArray(row) ? row : [row]).map(c => (c === null || c === undefined) ? '' : String(c)));
     if (gridData.length === 0) gridData = blankGrid();
 
-    buildMergeMaps(sheet, used);
+    const mergeDiagnostic = buildMergeMaps(sheet, used);
 
     let validationCheckError = '';
     let dropdownCellCount = 0;
@@ -178,7 +178,7 @@ function loadSheetFromWorkbook(sheetIndex) {
     validationDiagnostic = (validationCheckError
         ? ('dropdown check failed: ' + validationCheckError)
         : (dropdownCellCount === 0 ? 'no dropdown-list validations found on this sheet' : (dropdownCellCount + ' dropdown cell(s) detected'))
-    ) + ' | ' + dimNote;
+    ) + ' | ' + dimNote + ' | ' + mergeDiagnostic;
 
     renderGrid();
 }
@@ -206,30 +206,37 @@ function parseCellRef(ref) {
 function buildMergeMaps(sheet, used) {
     mergeAnchors = {};
     mergeCovered = new Set();
-    const mergeKeys = (sheet._mergeCells && Object.keys(sheet._mergeCells)) || [];
-    if (mergeKeys.length === 0) return;
+    try {
+        const mergeKeys = (sheet._mergeCells && Object.keys(sheet._mergeCells)) || [];
+        if (mergeKeys.length === 0) return 'no merges found (_mergeCells empty/missing)';
 
-    const startCell = used.startCell();
-    const startRow = startCell.rowNumber();
-    const startCol = startCell.columnNumber();
+        const startCell = used.startCell();
+        const startRow = startCell.rowNumber();
+        const startCol = startCell.columnNumber();
 
-    mergeKeys.forEach(ref => {
-        const parts = ref.split(':');
-        if (parts.length !== 2) return;
-        const start = parseCellRef(parts[0]);
-        const end = parseCellRef(parts[1]);
-        if (!start || !end) return;
-        const r0 = start.row - startRow, c0 = start.col - startCol;
-        const r1 = end.row - startRow, c1 = end.col - startCol;
-        if (r0 < 0 || c0 < 0) return;
-        mergeAnchors[r0 + ',' + c0] = { rowSpan: r1 - r0 + 1, colSpan: c1 - c0 + 1 };
-        for (let rr = r0; rr <= r1; rr++) {
-            for (let cc = c0; cc <= c1; cc++) {
-                if (rr === r0 && cc === c0) continue;
-                mergeCovered.add(rr + ',' + cc);
+        let applied = 0;
+        mergeKeys.forEach(ref => {
+            const parts = ref.split(':');
+            if (parts.length !== 2) return;
+            const start = parseCellRef(parts[0]);
+            const end = parseCellRef(parts[1]);
+            if (!start || !end) return;
+            const r0 = start.row - startRow, c0 = start.col - startCol;
+            const r1 = end.row - startRow, c1 = end.col - startCol;
+            if (r0 < 0 || c0 < 0) return;
+            mergeAnchors[r0 + ',' + c0] = { rowSpan: r1 - r0 + 1, colSpan: c1 - c0 + 1 };
+            applied++;
+            for (let rr = r0; rr <= r1; rr++) {
+                for (let cc = c0; cc <= c1; cc++) {
+                    if (rr === r0 && cc === c0) continue;
+                    mergeCovered.add(rr + ',' + cc);
+                }
             }
-        }
-    });
+        });
+        return mergeKeys.length + ' merge(s) found (' + mergeKeys.slice(0, 3).join(', ') + '), ' + applied + ' applied';
+    } catch (e) {
+        return 'merge read failed: ' + (e && e.message ? e.message : e);
+    }
 }
 
 // A cell's dataValidation() formula1 is either a literal quoted list
