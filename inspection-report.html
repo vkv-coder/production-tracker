@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx-populate@1.21.0/browser/xlsx-populate-no-encryption.min.js"></script>
 </head>
 <body>
 
@@ -34,6 +35,19 @@ let report = null;
 let format = null;
 let gridData = [];
 let activeCell = null;
+
+// Advanced engine state (xlsx-populate) — only active when the uploaded file
+// parses successfully. currentWorkbook is the live object we mutate on every
+// cell edit and finally re-serialize on Save, so every other sheet, style,
+// merge and untouched dropdown validation in the original file survives byte-
+// for-byte. If the file fails to parse, we fall back to the old single-sheet
+// SheetJS flow (usingAdvancedEngine stays false) instead of breaking the page.
+let currentWorkbook = null;
+let usingAdvancedEngine = false;
+let usedFallback = false;
+let sheetNames = [];
+let currentSheetIndex = 0;
+let validationMap = null;
 
 function goBack() {
     window.location.href = (session.role === 'Partner') ? 'partner-home.html' : ('job-detail.html?job=' + jobId);
@@ -70,6 +84,13 @@ async function loadSheetIntoGrid() {
     const container = document.getElementById('reportCard');
     container.innerHTML = '<p class="pr-empty">Loading sheet...</p>';
 
+    currentWorkbook = null;
+    usingAdvancedEngine = false;
+    usedFallback = false;
+    sheetNames = [];
+    currentSheetIndex = 0;
+    validationMap = null;
+
     if (report.file_path) {
         const { data: blob, error } = await supabaseClient.storage.from('inspection-sheets').download(report.file_path);
         if (error) {
@@ -77,15 +98,24 @@ async function loadSheetIntoGrid() {
             return;
         }
         try {
-            const arrayBuffer = await blob.arrayBuffer();
-            const wb = XLSX.read(arrayBuffer, { type: 'array' });
-            const ws = wb.Sheets[wb.SheetNames[0]];
-            gridData = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }).map(row => row.map(c => String(c)));
-            if (gridData.length === 0) gridData = blankGrid();
-        } catch (e) {
-            container.innerHTML = '<p class="pr-empty">⚠️ Could not read this file as a spreadsheet (' + escapeHtml(e.message) + '). Download it below instead.</p>' +
-                '<button class="pr-btn pr-btn-primary" style="margin-top:8px;" onclick="downloadSheet()">Download</button>';
+            currentWorkbook = await XlsxPopulate.fromDataAsync(blob);
+            sheetNames = currentWorkbook.sheets().map(s => s.name());
+            usingAdvancedEngine = true;
+            loadSheetFromWorkbook(0);
             return;
+        } catch (e) {
+            usedFallback = true;
+            try {
+                const arrayBuffer = await blob.arrayBuffer();
+                const wb = XLSX.read(arrayBuffer, { type: 'array' });
+                const ws = wb.Sheets[wb.SheetNames[0]];
+                gridData = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }).map(row => row.map(c => String(c)));
+                if (gridData.length === 0) gridData = blankGrid();
+            } catch (e2) {
+                container.innerHTML = '<p class="pr-empty">⚠️ Could not read this file as a spreadsheet (' + escapeHtml(e2.message) + '). Download it below instead.</p>' +
+                    '<button class="pr-btn pr-btn-primary" style="margin-top:8px;" onclick="downloadSheet()">Download</button>';
+                return;
+            }
         }
     } else {
         gridData = blankGrid();
@@ -93,11 +123,79 @@ async function loadSheetIntoGrid() {
     renderGrid();
 }
 
+// Reads one sheet out of the live workbook (values + per-cell dropdown-list
+// validations) into the on-screen grid. Called on initial load and whenever a
+// sheet tab is clicked — never re-fetches, since currentWorkbook already
+// holds any edits made on other sheets in this session.
+function loadSheetFromWorkbook(sheetIndex) {
+    currentSheetIndex = sheetIndex;
+    const sheet = currentWorkbook.sheet(sheetIndex);
+    const used = sheet.usedRange();
+
+    if (!used) {
+        gridData = blankGrid();
+        validationMap = gridData.map(row => row.map(() => null));
+        renderGrid();
+        return;
+    }
+
+    const rawValues = used.value();
+    gridData = rawValues.map(row => (Array.isArray(row) ? row : [row]).map(c => (c === null || c === undefined) ? '' : String(c)));
+    if (gridData.length === 0) gridData = blankGrid();
+
+    validationMap = gridData.map((row, r) => row.map((cellVal, c) => {
+        let dv = null;
+        try { dv = used.cell(r + 1, c + 1).dataValidation(); } catch (e) { dv = null; }
+        return (dv && dv.type === 'list') ? resolveListOptions(dv.formula1, sheet) : null;
+    }));
+
+    renderGrid();
+}
+
+// A cell's dataValidation() formula1 is either a literal quoted list
+// ("Yes,No,NA") or a cell range reference (optionally "OtherSheet!A1:A5").
+// Resolve either form into a plain array of option strings, or null if it
+// can't be parsed — cells fall back to a normal wrapped text box in that case.
+function resolveListOptions(formula1, sheet) {
+    if (!formula1) return null;
+    const trimmed = String(formula1).trim();
+    if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+        return trimmed.slice(1, -1).split(',').map(s => s.trim()).filter(s => s !== '');
+    }
+    try {
+        let sheetName = sheet.name();
+        let rangeRef = trimmed;
+        const bangIdx = trimmed.indexOf('!');
+        if (bangIdx !== -1) {
+            sheetName = trimmed.slice(0, bangIdx).replace(/^'|'$/g, '');
+            rangeRef = trimmed.slice(bangIdx + 1);
+        }
+        rangeRef = rangeRef.replace(/\$/g, '');
+        const refSheet = currentWorkbook.sheet(sheetName);
+        if (!refSheet) return null;
+        const vals = refSheet.range(rangeRef).value();
+        const flat = [].concat(...vals).filter(v => v !== null && v !== undefined && v !== '');
+        return flat.length ? flat.map(String) : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function switchSheet(idx) {
+    if (idx === currentSheetIndex) return;
+    loadSheetFromWorkbook(idx);
+}
+
 function normalizeGrid() {
     const maxCols = gridData.reduce((max, row) => Math.max(max, row.length), 1);
     gridData.forEach(row => {
         while (row.length < maxCols) row.push('');
     });
+}
+
+function autoGrowCell(el) {
+    el.style.height = 'auto';
+    el.style.height = el.scrollHeight + 'px';
 }
 
 function renderGrid() {
@@ -108,11 +206,24 @@ function renderGrid() {
     if (report.uploaded_at) {
         html += '<p style="font-size:12px; color:#666; margin:0 0 8px;">Last saved by ' + escapeHtml(report.uploaded_by || '-') + ' on ' + new Date(report.uploaded_at).toLocaleString() + '</p>';
     }
+    if (usedFallback) {
+        html += '<p style="font-size:12px; color:#b8860b; margin:0 0 8px;">⚠️ Advanced view (multiple sheets/dropdowns) isn\'t available for this file — editing in simple mode.</p>';
+    }
+
+    if (usingAdvancedEngine && sheetNames.length > 1) {
+        html += '<div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px;">';
+        sheetNames.forEach((name, idx) => {
+            html += '<button class="pr-btn ' + (idx === currentSheetIndex ? 'pr-btn-primary' : 'pr-btn-outline') + '" onclick="switchSheet(' + idx + ')">' + escapeHtml(name) + '</button>';
+        });
+        html += '</div>';
+    }
 
     html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">';
     html += '<button class="pr-btn pr-btn-primary" onclick="saveSheetGrid()">Save</button>';
-    html += '<button class="pr-btn pr-btn-outline" onclick="addRow()">+ Row Above Cursor</button>';
-    html += '<button class="pr-btn pr-btn-outline" onclick="addColumn()">+ Column Before Cursor</button>';
+    if (!usingAdvancedEngine) {
+        html += '<button class="pr-btn pr-btn-outline" onclick="addRow()">+ Row Above Cursor</button>';
+        html += '<button class="pr-btn pr-btn-outline" onclick="addColumn()">+ Column Before Cursor</button>';
+    }
     if (report.file_path) {
         html += '<button class="pr-btn pr-btn-outline" onclick="downloadSheet()">Download Copy</button>';
         html += '<button class="pr-btn pr-btn-danger" onclick="deleteSheet()">Clear Sheet</button>';
@@ -124,17 +235,33 @@ function renderGrid() {
     gridData.forEach((row, r) => {
         html += '<tr>';
         row.forEach((cell, c) => {
-            html += '<td style="padding:0; border:1px solid #888;"><input value="' + escapeHtml(cell) + '" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" style="border:none; padding:6px 8px; font-size:13px; width:110px; min-width:110px;"></td>';
+            const options = (validationMap && validationMap[r] && validationMap[r][c]) || null;
+            html += '<td style="padding:0; border:1px solid #888; vertical-align:top;">';
+            if (options) {
+                html += '<select onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" style="border:none; padding:6px 8px; font-size:13px; width:130px; min-width:130px;">';
+                html += '<option value=""' + (cell === '' ? ' selected' : '') + '></option>';
+                options.forEach(opt => {
+                    html += '<option value="' + escapeHtml(opt) + '"' + (cell === opt ? ' selected' : '') + '>' + escapeHtml(opt) + '</option>';
+                });
+                html += '</select>';
+            } else {
+                html += '<textarea rows="1" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" oninput="autoGrowCell(this)" style="border:none; padding:6px 8px; font-size:13px; width:130px; min-width:130px; white-space:pre-wrap; overflow-wrap:break-word; resize:none; overflow:hidden; font-family:inherit; display:block;">' + escapeHtml(cell) + '</textarea>';
+            }
+            html += '</td>';
         });
         html += '</tr>';
     });
     html += '</table></div>';
 
     container.innerHTML = html;
+    container.querySelectorAll('textarea').forEach(autoGrowCell);
 }
 
 function updateCell(r, c, value) {
     gridData[r][c] = value;
+    if (usingAdvancedEngine && currentWorkbook) {
+        currentWorkbook.sheet(currentSheetIndex).cell(r + 1, c + 1).value(value);
+    }
 }
 
 function setActiveCell(r, c) {
@@ -155,11 +282,16 @@ function addColumn() {
 }
 
 async function saveSheetGrid() {
-    const ws = XLSX.utils.aoa_to_sheet(gridData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
-    const wbout = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
-    const blob = new Blob([wbout], { type: 'application/octet-stream' });
+    let blob;
+    if (usingAdvancedEngine && currentWorkbook) {
+        blob = await currentWorkbook.outputAsync();
+    } else {
+        const ws = XLSX.utils.aoa_to_sheet(gridData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+        const wbout = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+        blob = new Blob([wbout], { type: 'application/octet-stream' });
+    }
 
     const fileName = (report.file_name && report.file_name.trim()) || ((format ? format.code : 'sheet') + '.xlsx');
     const path = session.companyId + '/' + report.id + '/' + fileName;
@@ -199,6 +331,12 @@ async function deleteSheet() {
         .single();
     if (error) { alert('Error: ' + error.message); return; }
     report = updated;
+    currentWorkbook = null;
+    usingAdvancedEngine = false;
+    usedFallback = false;
+    sheetNames = [];
+    currentSheetIndex = 0;
+    validationMap = null;
     gridData = blankGrid();
     renderGrid();
 }
