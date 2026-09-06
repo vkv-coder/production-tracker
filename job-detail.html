@@ -176,6 +176,7 @@ function switchTab(tab) {
 
 // ============ FABRICATION ============
 async function loadFabTable() {
+    const scrollY = window.scrollY;
     const container = document.getElementById('fabTable');
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
 
@@ -351,6 +352,7 @@ async function loadFabTable() {
         html += '</div>';
     });
     container.innerHTML = html;
+    window.scrollTo(0, scrollY);
 }
 
 async function updateFabField(trackingId, field, value) {
@@ -425,6 +427,7 @@ function selectPaintItem(itemId, btnEl) {
 }
 
 async function loadPaintTable() {
+    const scrollY = window.scrollY;
     const container = document.getElementById('paintTable');
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
 
@@ -575,6 +578,7 @@ async function loadPaintTable() {
         html += '</div>';
     });
     container.innerHTML = html;
+    window.scrollTo(0, scrollY);
 }
 
 async function togglePaintWorker(trackingId, workerId, checked) {
