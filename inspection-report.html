@@ -108,6 +108,7 @@ async function loadSheetIntoGrid() {
     mergeAnchors = {};
     mergeCovered = new Set();
     colWidths = [];
+    rowHeights = [];
     rawValidationsBySheet = {};
 
     if (report.file_path) {
@@ -158,6 +159,8 @@ function loadSheetFromWorkbook(sheetIndex) {
         validationMap = gridData.map(row => row.map(() => null));
         mergeAnchors = {};
         mergeCovered = new Set();
+        colWidths = [];
+        rowHeights = [];
         renderGrid();
         return;
     }
@@ -168,6 +171,7 @@ function loadSheetFromWorkbook(sheetIndex) {
 
     const mergeDiagnostic = buildMergeMaps(sheet, used);
     buildColumnWidths(sheet, used);
+    buildRowHeights(sheet, used);
 
     const startCell = used.startCell();
     const startRow = startCell.rowNumber();
@@ -295,6 +299,34 @@ function buildColumnWidths(sheet, used) {
         }
     } catch (e) {
         colWidths = [];
+    }
+}
+
+let rowHeights = [];
+
+// Same fix as buildColumnWidths, but for rows — genuinely short spacer rows
+// in the original file were rendering as full-height blank grey rows because
+// nothing accounted for each row's actual height (Excel row heights are in
+// points; ~15pt is Excel's own default for an unset row).
+function buildRowHeights(sheet, used) {
+    rowHeights = [];
+    try {
+        const startCell = used.startCell();
+        const startRow = startCell.rowNumber();
+        const numRows = gridData.length;
+        for (let r = 0; r < numRows; r++) {
+            let row = null;
+            try { row = sheet.row(startRow + r); } catch (e) { row = null; }
+            const hidden = (row && typeof row.hidden === 'function') ? row.hidden() : false;
+            const h = (row && typeof row.height === 'function') ? row.height() : undefined;
+            const pts = (typeof h === 'number') ? h : 15;
+            let px = hidden ? 6 : Math.round(pts * 1.333);
+            if (px < 10) px = 10;
+            if (px > 300) px = 300;
+            rowHeights.push(px);
+        }
+    } catch (e) {
+        rowHeights = [];
     }
 }
 
@@ -432,6 +464,8 @@ function renderGrid() {
             const spanAttrs = span ? (' rowspan="' + span.rowSpan + '" colspan="' + span.colSpan + '"') : '';
             let cellWidth = colWidths[c] || 130;
             if (span) { for (let k = 1; k < span.colSpan; k++) cellWidth += (colWidths[c + k] || 130); }
+            let cellHeight = rowHeights[r] || 24;
+            if (span) { for (let k = 1; k < span.rowSpan; k++) cellHeight += (rowHeights[r + k] || 24); }
             const options = (validationMap && validationMap[r] && validationMap[r][c]) || null;
             // Dropdown cells are the form's designated inspector-input fields
             // (OK/NOT OK etc.) — highlight them while still blank so it's
@@ -439,16 +473,20 @@ function renderGrid() {
             const needsInput = !!options && cell === '';
             const inputStyle = needsInput ? ' background:#fff3b0;' : '';
             const cellId = 'cell_' + r + '_' + c;
+            // Padding alone adds ~12px to any control's rendered height, so a
+            // genuinely short spacer row still needs tight padding or it'll
+            // look thick regardless of the height we ask for.
+            const vPad = cellHeight < 20 ? 1 : 6;
             html += '<td' + spanAttrs + ' style="padding:0; border:1px solid #888; vertical-align:top;">';
             if (options) {
-                html += '<select id="' + cellId + '" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" onkeydown="handleCellKeydown(event,' + r + ',' + c + ')" style="border:none; padding:6px 8px; font-size:13px; width:' + cellWidth + 'px; min-width:' + cellWidth + 'px;' + inputStyle + '">';
+                html += '<select id="' + cellId + '" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" onkeydown="handleCellKeydown(event,' + r + ',' + c + ')" style="border:none; padding:' + vPad + 'px 8px; font-size:13px; width:' + cellWidth + 'px; min-width:' + cellWidth + 'px; height:' + cellHeight + 'px; min-height:' + cellHeight + 'px;' + inputStyle + '">';
                 html += '<option value=""' + (cell === '' ? ' selected' : '') + '></option>';
                 options.forEach(opt => {
                     html += '<option value="' + escapeHtml(opt) + '"' + (cell === opt ? ' selected' : '') + '>' + escapeHtml(opt) + '</option>';
                 });
                 html += '</select>';
             } else {
-                html += '<textarea id="' + cellId + '" rows="1" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" onkeydown="handleCellKeydown(event,' + r + ',' + c + ')" oninput="autoGrowCell(this)" style="border:none; padding:6px 8px; font-size:13px; width:' + cellWidth + 'px; min-width:' + cellWidth + 'px; white-space:pre-wrap; overflow-wrap:break-word; resize:none; overflow:hidden; font-family:inherit; display:block;' + inputStyle + '">' + escapeHtml(cell) + '</textarea>';
+                html += '<textarea id="' + cellId + '" rows="1" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" onkeydown="handleCellKeydown(event,' + r + ',' + c + ')" oninput="autoGrowCell(this)" style="border:none; padding:' + vPad + 'px 8px; font-size:13px; width:' + cellWidth + 'px; min-width:' + cellWidth + 'px; height:' + cellHeight + 'px; min-height:' + cellHeight + 'px; white-space:pre-wrap; overflow-wrap:break-word; resize:none; overflow:hidden; font-family:inherit; display:block;' + inputStyle + '">' + escapeHtml(cell) + '</textarea>';
             }
             html += '</td>';
         });
