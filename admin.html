@@ -149,17 +149,23 @@ async function fetchActiveWorkers() {
     return data || [];
 }
 
-// Native multi-select box: every active format listed as an option, currently
-// attached ones pre-selected. Ctrl/Cmd-click (or drag) to pick 3+ at once in one
-// control, instead of adding them one at a time. data-assigned tracks the
-// before-state so the onchange handler can diff it against the new selection.
-function renderFormatMultiSelect(allFormats, assignedSet, entityId, syncFnName) {
-    let html = '<label class="pr-label" style="margin-top:8px;">Inspection Formats (ctrl/cmd-click to select multiple)</label>';
-    html += '<select multiple class="pr-select" size="' + Math.min(6, Math.max(3, allFormats.length)) + '" data-assigned="' + Array.from(assignedSet).join(',') + '" onchange="' + syncFnName + '(\'' + entityId + '\', this)">';
+// Checkbox list instead of a native multi-select: a plain tap toggles just
+// that one format on/off, no ctrl/cmd-click needed (which doesn't even work
+// on touch), so it behaves the same way on phone and desktop.
+function renderFormatCheckboxList(allFormats, assignedSet, entityId, toggleFnName) {
+    let html = '<label class="pr-label" style="margin-top:8px;">Inspection Formats (tap to attach/detach)</label>';
+    html += '<div style="max-height:180px; overflow-y:auto; border:1px solid #ccc; border-radius:6px; padding:6px 10px; margin-bottom:10px;">';
+    if (allFormats.length === 0) {
+        html += '<span style="font-size:12px; color:#999;">No active formats</span>';
+    }
     allFormats.forEach(f => {
-        html += '<option value="' + f.id + '"' + (assignedSet.has(f.id) ? ' selected' : '') + '>' + escapeHtml(f.code) + ' — ' + escapeHtml(f.name) + '</option>';
+        const checked = assignedSet.has(f.id);
+        html += '<label style="display:flex; align-items:center; gap:8px; padding:5px 0; font-size:13px; cursor:pointer;">';
+        html += '<input type="checkbox"' + (checked ? ' checked' : '') + ' onchange="' + toggleFnName + '(\'' + entityId + '\',\'' + f.id + '\',this.checked)">';
+        html += escapeHtml(f.code) + ' — ' + escapeHtml(f.name);
+        html += '</label>';
     });
-    html += '</select>';
+    html += '</div>';
     return html;
 }
 
@@ -220,7 +226,7 @@ async function loadFabSteps() {
         html += '<label class="pr-label">Order Number</label><input type="number" class="pr-input" id="fabStepOrder_' + s.id + '" value="' + s.step_order + '">';
         const fabAssignedFmtSet = new Set(stepFormats.map(x => x.format_id));
         const fabDefaultInspSet = new Set((s.pr_fab_step_default_inspectors || []).map(x => x.inspector_id));
-        html += renderFormatMultiSelect(formats, fabAssignedFmtSet, s.id, 'syncFabStepFormats');
+        html += renderFormatCheckboxList(formats, fabAssignedFmtSet, s.id, 'toggleFabStepFormat');
         html += renderInspectorAddDropdown(inspectors.filter(i => !fabDefaultInspSet.has(i.id)), 'toggleFabStepDefaultInspector', s.id);
         html += renderChipList('Default Inspectors (auto-assigned to every new job)', inspectors.filter(i => fabDefaultInspSet.has(i.id)), 'inspector_name', 'toggleFabStepDefaultInspector', s.id);
         html += '<div style="display:flex; gap:8px; margin-top:8px;">';
@@ -275,18 +281,13 @@ async function backfillFormatToExistingTrackings(formatId, trackingRows, sourceC
     }
 }
 
-async function syncFabStepFormats(fabStepId, selectEl) {
-    const selected = new Set(Array.from(selectEl.selectedOptions).map(o => o.value));
-    const before = new Set((selectEl.dataset.assigned || '').split(',').filter(Boolean));
-    const toAdd = [...selected].filter(id => !before.has(id));
-    const toRemove = [...before].filter(id => !selected.has(id));
-    for (const formatId of toAdd) {
+async function toggleFabStepFormat(fabStepId, formatId, checked) {
+    if (checked) {
         const { error } = await supabaseClient.from('pr_fab_step_formats').insert({ fab_step_id: fabStepId, format_id: formatId });
         if (error) { alert('Error: ' + error.message); return; }
         const { data: trackingRows } = await supabaseClient.from('pr_fab_tracking').select('id, job_id').eq('fab_step_id', fabStepId);
         await backfillFormatToExistingTrackings(formatId, trackingRows || [], 'fab_tracking_id', 'pr_fab_tracking_reports');
-    }
-    for (const formatId of toRemove) {
+    } else {
         const { error } = await supabaseClient.from('pr_fab_step_formats').delete().eq('fab_step_id', fabStepId).eq('format_id', formatId);
         if (error) { alert('Error: ' + error.message); return; }
     }
@@ -480,7 +481,7 @@ async function loadPaintProcesses() {
         html += '<label class="pr-label">Order Number</label><input type="number" class="pr-input" id="processOrder_' + p.id + '" value="' + p.process_order + '">';
         const paintAssignedFmtSet = new Set(procFormats.map(x => x.format_id));
         const paintDefaultInspSet = new Set((p.pr_paint_process_default_inspectors || []).map(x => x.inspector_id));
-        html += renderFormatMultiSelect(formats, paintAssignedFmtSet, p.id, 'syncProcessFormats');
+        html += renderFormatCheckboxList(formats, paintAssignedFmtSet, p.id, 'toggleProcessFormat');
         html += renderInspectorAddDropdown(inspectors.filter(i => !paintDefaultInspSet.has(i.id)), 'toggleProcessDefaultInspector', p.id);
         html += renderChipList('Default Inspectors (auto-assigned to every new job)', inspectors.filter(i => paintDefaultInspSet.has(i.id)), 'inspector_name', 'toggleProcessDefaultInspector', p.id);
         html += '<div style="display:flex; gap:8px; margin-top:8px;">';
@@ -501,18 +502,13 @@ function toggleProcessEditRow(id) {
     if (opening) openProcessIds.add(id); else openProcessIds.delete(id);
 }
 
-async function syncProcessFormats(processId, selectEl) {
-    const selected = new Set(Array.from(selectEl.selectedOptions).map(o => o.value));
-    const before = new Set((selectEl.dataset.assigned || '').split(',').filter(Boolean));
-    const toAdd = [...selected].filter(id => !before.has(id));
-    const toRemove = [...before].filter(id => !selected.has(id));
-    for (const formatId of toAdd) {
+async function toggleProcessFormat(processId, formatId, checked) {
+    if (checked) {
         const { error } = await supabaseClient.from('pr_paint_process_formats').insert({ process_id: processId, format_id: formatId });
         if (error) { alert('Error: ' + error.message); return; }
         const { data: trackingRows } = await supabaseClient.from('pr_paint_tracking').select('id, job_id').eq('process_id', processId);
         await backfillFormatToExistingTrackings(formatId, trackingRows || [], 'paint_tracking_id', 'pr_paint_tracking_reports');
-    }
-    for (const formatId of toRemove) {
+    } else {
         const { error } = await supabaseClient.from('pr_paint_process_formats').delete().eq('process_id', processId).eq('format_id', formatId);
         if (error) { alert('Error: ' + error.message); return; }
     }
