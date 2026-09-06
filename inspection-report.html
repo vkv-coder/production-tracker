@@ -109,6 +109,7 @@ async function loadSheetIntoGrid() {
     mergeCovered = new Set();
     colWidths = [];
     rowHeights = [];
+    fillMap = [];
     rawValidationsBySheet = {};
 
     if (report.file_path) {
@@ -161,6 +162,7 @@ function loadSheetFromWorkbook(sheetIndex) {
         mergeCovered = new Set();
         colWidths = [];
         rowHeights = [];
+        fillMap = [];
         renderGrid();
         return;
     }
@@ -172,6 +174,7 @@ function loadSheetFromWorkbook(sheetIndex) {
     const mergeDiagnostic = buildMergeMaps(sheet, used);
     buildColumnWidths(sheet, used);
     buildRowHeights(sheet, used);
+    buildFillMap(used);
 
     const startCell = used.startCell();
     const startRow = startCell.rowNumber();
@@ -282,23 +285,21 @@ let colWidths = [];
 // narrow instead of ballooning into something that looks like an extra field.
 function buildColumnWidths(sheet, used) {
     colWidths = [];
-    try {
-        const startCell = used.startCell();
-        const startCol = startCell.columnNumber();
-        const numCols = gridData[0] ? gridData[0].length : 0;
-        for (let c = 0; c < numCols; c++) {
-            let col = null;
-            try { col = sheet.column(startCol + c); } catch (e) { col = null; }
+    let startCol = 1;
+    try { startCol = used.startCell().columnNumber(); } catch (e) { /* fall back to column 1 */ }
+    const numCols = gridData[0] ? gridData[0].length : 0;
+    for (let c = 0; c < numCols; c++) {
+        let px = 130;
+        try {
+            const col = sheet.column(startCol + c);
             const hidden = (col && typeof col.hidden === 'function') ? col.hidden() : false;
             const w = (col && typeof col.width === 'function') ? col.width() : undefined;
             const units = (typeof w === 'number') ? w : 9.140625;
-            let px = hidden ? 6 : Math.round(units * 7 + 5);
+            px = hidden ? 6 : Math.round(units * 7 + 5);
             if (px < 10) px = 10;
             if (px > 400) px = 400;
-            colWidths.push(px);
-        }
-    } catch (e) {
-        colWidths = [];
+        } catch (e) { px = 130; }
+        colWidths.push(px);
     }
 }
 
@@ -310,23 +311,51 @@ let rowHeights = [];
 // points; ~15pt is Excel's own default for an unset row).
 function buildRowHeights(sheet, used) {
     rowHeights = [];
-    try {
-        const startCell = used.startCell();
-        const startRow = startCell.rowNumber();
-        const numRows = gridData.length;
-        for (let r = 0; r < numRows; r++) {
-            let row = null;
-            try { row = sheet.row(startRow + r); } catch (e) { row = null; }
+    let startRow = 1;
+    try { startRow = used.startCell().rowNumber(); } catch (e) { /* fall back to row 1 */ }
+    const numRows = gridData.length;
+    for (let r = 0; r < numRows; r++) {
+        let px = 24;
+        try {
+            const row = sheet.row(startRow + r);
             const hidden = (row && typeof row.hidden === 'function') ? row.hidden() : false;
             const h = (row && typeof row.height === 'function') ? row.height() : undefined;
             const pts = (typeof h === 'number') ? h : 15;
-            let px = hidden ? 6 : Math.round(pts * 1.333);
+            px = hidden ? 6 : Math.round(pts * 1.333);
             if (px < 10) px = 10;
             if (px > 300) px = 300;
-            rowHeights.push(px);
+        } catch (e) { px = 24; }
+        rowHeights.push(px);
+    }
+}
+
+let fillMap = [];
+
+// A section-divider row/column in the original file (solid dark background,
+// no text — visible in the "Original Layout" screenshot) was rendering as a
+// plain blank cell here, since only values/validations/dimensions were ever
+// read. That likely reads as an unstyled "extra" blank cell rather than the
+// intentional colored divider it actually is. Read each cell's solid fill
+// color (only the common RGB case — theme/indexed palette colors are
+// skipped, cells just render unstyled in that case rather than guessing).
+function getCellFillColor(cell) {
+    try {
+        const fill = cell.style('fill');
+        if (fill && fill.type === 'solid' && fill.color && fill.color.rgb) {
+            const rgb = String(fill.color.rgb);
+            return '#' + rgb.slice(-6);
         }
+    } catch (e) {}
+    return null;
+}
+
+function buildFillMap(used) {
+    try {
+        fillMap = gridData.map((row, r) => row.map((cellVal, c) => {
+            try { return getCellFillColor(used.cell(r, c)); } catch (e) { return null; }
+        }));
     } catch (e) {
-        rowHeights = [];
+        fillMap = [];
     }
 }
 
@@ -471,7 +500,8 @@ function renderGrid() {
             // (OK/NOT OK etc.) — highlight them while still blank so it's
             // obvious at a glance what still needs filling in.
             const needsInput = !!options && cell === '';
-            const inputStyle = needsInput ? ' background:#fff3b0;' : '';
+            const fillColor = (fillMap[r] && fillMap[r][c]) || null;
+            const inputStyle = needsInput ? ' background:#fff3b0;' : (fillColor ? (' background:' + fillColor + ';') : '');
             const cellId = 'cell_' + r + '_' + c;
             // Padding alone adds ~12px to any control's rendered height, so a
             // genuinely short spacer row still needs tight padding or it'll
