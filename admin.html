@@ -241,6 +241,40 @@ function toggleFabStepEditRow(id) {
     if (opening) openFabStepIds.add(id); else openFabStepIds.delete(id);
 }
 
+// Attaching a format to a step/process master only affects NEW jobs created
+// afterwards (new-job.html auto-attaches from the master at creation time).
+// So a newly-added format also needs to be backfilled onto every job that
+// already exists for this step/process, or it silently never shows up on
+// Job Status for jobs created before the format was attached.
+async function backfillFormatToExistingTrackings(formatId, trackingRows, sourceCol, linkTable) {
+    for (const t of trackingRows) {
+        let reportId;
+        const { data: existing } = await supabaseClient.from('pr_inspection_reports').select('id').eq('job_id', t.job_id).eq('format_id', formatId).maybeSingle();
+        if (existing) {
+            reportId = existing.id;
+        } else {
+            const { data: fmt } = await supabaseClient.from('pr_inspection_formats_master').select('template_file_path, template_file_name').eq('id', formatId).maybeSingle();
+            const { data: report, error } = await supabaseClient.from('pr_inspection_reports').insert({ company_id: session.companyId, job_id: t.job_id, format_id: formatId }).select('id').single();
+            if (error || !report) continue;
+            reportId = report.id;
+            if (fmt && fmt.template_file_path) {
+                const destPath = session.companyId + '/' + reportId + '/' + fmt.template_file_name;
+                const { error: copyError } = await supabaseClient.storage.from('inspection-sheets').copy(fmt.template_file_path, destPath);
+                if (!copyError) {
+                    await supabaseClient.from('pr_inspection_reports').update({
+                        file_path: destPath, file_name: fmt.template_file_name,
+                        uploaded_by: 'Template (auto-attached)', uploaded_at: new Date().toISOString()
+                    }).eq('id', reportId);
+                }
+            }
+        }
+        const linkObj = { report_id: reportId };
+        linkObj[sourceCol] = t.id;
+        const { error: linkError } = await supabaseClient.from(linkTable).insert(linkObj);
+        if (linkError && linkError.code !== '23505') { alert('Error backfilling to existing jobs: ' + linkError.message); return; }
+    }
+}
+
 async function syncFabStepFormats(fabStepId, selectEl) {
     const selected = new Set(Array.from(selectEl.selectedOptions).map(o => o.value));
     const before = new Set((selectEl.dataset.assigned || '').split(',').filter(Boolean));
@@ -249,6 +283,8 @@ async function syncFabStepFormats(fabStepId, selectEl) {
     for (const formatId of toAdd) {
         const { error } = await supabaseClient.from('pr_fab_step_formats').insert({ fab_step_id: fabStepId, format_id: formatId });
         if (error) { alert('Error: ' + error.message); return; }
+        const { data: trackingRows } = await supabaseClient.from('pr_fab_tracking').select('id, job_id').eq('fab_step_id', fabStepId);
+        await backfillFormatToExistingTrackings(formatId, trackingRows || [], 'fab_tracking_id', 'pr_fab_tracking_reports');
     }
     for (const formatId of toRemove) {
         const { error } = await supabaseClient.from('pr_fab_step_formats').delete().eq('fab_step_id', fabStepId).eq('format_id', formatId);
@@ -473,6 +509,8 @@ async function syncProcessFormats(processId, selectEl) {
     for (const formatId of toAdd) {
         const { error } = await supabaseClient.from('pr_paint_process_formats').insert({ process_id: processId, format_id: formatId });
         if (error) { alert('Error: ' + error.message); return; }
+        const { data: trackingRows } = await supabaseClient.from('pr_paint_tracking').select('id, job_id').eq('process_id', processId);
+        await backfillFormatToExistingTrackings(formatId, trackingRows || [], 'paint_tracking_id', 'pr_paint_tracking_reports');
     }
     for (const formatId of toRemove) {
         const { error } = await supabaseClient.from('pr_paint_process_formats').delete().eq('process_id', processId).eq('format_id', formatId);
