@@ -368,6 +368,88 @@ function parseCellRef(ref) {
     return { row: parseInt(m[2], 10), col: col };
 }
 
+function colNumberToLetters(col) {
+    let letters = '';
+    while (col > 0) {
+        const rem = (col - 1) % 26;
+        letters = String.fromCharCode(65 + rem) + letters;
+        col = Math.floor((col - 1) / 26);
+    }
+    return letters;
+}
+
+// Confirmed (via a bare load-then-save round trip with no app logic
+// involved) that xlsx-populate's own outputAsync() drops the cached <v>
+// result for a formula cell whenever that result is exactly 0 (e.g. a
+// COUNTIF tally before any rows are filled in) — the <f> formula itself
+// survives intact, only the cached value is lost. Since the in-memory read
+// right after load is confirmed correct, capture which formula cells are
+// currently 0 before saving, then patch the written XML to put the missing
+// <v>0</v> back — handles both a plain <f>...</f> and a self-closing shared
+// formula reference <f .../>, neither of which get a <v> child from the bug.
+function buildFormulaZeroPatchList(workbook) {
+    const patchList = [];
+    try {
+        workbook.sheets().forEach(sheet => {
+            const used = sheet.usedRange();
+            if (!used) return;
+            const startCell = used.startCell();
+            const startRow = startCell.rowNumber();
+            const startCol = startCell.columnNumber();
+            const values = used.value();
+            values.forEach((row, r) => {
+                row.forEach((val, c) => {
+                    if (val !== 0) return;
+                    let cell, formula;
+                    try { cell = used.cell(r, c); formula = cell.formula(); } catch (e) { return; }
+                    if (formula) {
+                        patchList.push({ sheet: sheet.name(), address: colNumberToLetters(startCol + c) + (startRow + r) });
+                    }
+                });
+            });
+        });
+    } catch (e) { /* best-effort — worst case the pre-existing bug just isn't patched */ }
+    return patchList;
+}
+
+async function patchDroppedZeroFormulas(blob, patchList) {
+    if (!patchList.length) return blob;
+    try {
+        const zip = await JSZip.loadAsync(blob);
+        const workbookXmlText = await zip.file('xl/workbook.xml').async('string');
+        const sheetNameToRid = {};
+        Array.from(workbookXmlText.matchAll(/<sheet[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"/g)).forEach(m => {
+            sheetNameToRid[m[1]] = m[2];
+        });
+        const relsText = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+        const ridToTarget = {};
+        Array.from(relsText.matchAll(/<Relationship[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"/g)).forEach(m => {
+            ridToTarget[m[1]] = m[2];
+        });
+
+        const bySheet = {};
+        patchList.forEach(p => { (bySheet[p.sheet] = bySheet[p.sheet] || []).push(p.address); });
+
+        for (const sheetName of Object.keys(bySheet)) {
+            const target = ridToTarget[sheetNameToRid[sheetName]];
+            if (!target) continue;
+            const path = 'xl/' + target;
+            const file = zip.file(path);
+            if (!file) continue;
+            let xmlText = await file.async('string');
+            bySheet[sheetName].forEach(addr => {
+                const re = new RegExp('(<c r="' + addr + '"[^>]*>(?:<f[^>]*/>|<f[^>]*>(?:(?!</c>).)*?</f>))(</c>)');
+                xmlText = xmlText.replace(re, '$1<v>0</v>$2');
+            });
+            zip.file(path, xmlText);
+        }
+
+        return await zip.generateAsync({ type: 'blob' });
+    } catch (e) {
+        return blob;
+    }
+}
+
 function buildMergeMaps(sheet, used) {
     mergeAnchors = {};
     mergeCovered = new Set();
@@ -597,7 +679,9 @@ async function saveSheetGrid() {
     let blob;
     try {
         if (usingAdvancedEngine && currentWorkbook) {
+            const zeroPatchList = buildFormulaZeroPatchList(currentWorkbook);
             blob = await withTimeout(currentWorkbook.outputAsync(), 20000, 'Preparing file');
+            blob = await patchDroppedZeroFormulas(blob, zeroPatchList);
         } else {
             const ws = XLSX.utils.aoa_to_sheet(gridData);
             const wb = XLSX.utils.book_new();
