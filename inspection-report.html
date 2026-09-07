@@ -110,6 +110,7 @@ async function loadSheetIntoGrid() {
     colWidths = [];
     rowHeights = [];
     fillMap = [];
+    fontColorMap = [];
     rawValidationsBySheet = {};
 
     if (report.file_path) {
@@ -163,6 +164,7 @@ function loadSheetFromWorkbook(sheetIndex) {
         colWidths = [];
         rowHeights = [];
         fillMap = [];
+        fontColorMap = [];
         renderGrid();
         return;
     }
@@ -175,6 +177,7 @@ function loadSheetFromWorkbook(sheetIndex) {
     buildColumnWidths(sheet, used);
     buildRowHeights(sheet, used);
     buildFillMap(used);
+    buildFontColorMap(used);
 
     const startCell = used.startCell();
     const startRow = startCell.rowNumber();
@@ -356,6 +359,30 @@ function buildFillMap(used) {
         }));
     } catch (e) {
         fillMap = [];
+    }
+}
+
+let fontColorMap = [];
+
+// A dark fill (like the navy header bands) is usually paired with white text
+// in the original file for contrast — without also reading font color, that
+// text renders in the browser's default black, on top of the now-correctly-
+// applied dark background, making it unreadable.
+function getCellFontColor(cell) {
+    try {
+        const color = cell.style('fontColor');
+        if (color && color.rgb) return '#' + String(color.rgb).slice(-6);
+    } catch (e) {}
+    return null;
+}
+
+function buildFontColorMap(used) {
+    try {
+        fontColorMap = gridData.map((row, r) => row.map((cellVal, c) => {
+            try { return getCellFontColor(used.cell(r, c)); } catch (e) { return null; }
+        }));
+    } catch (e) {
+        fontColorMap = [];
     }
 }
 
@@ -583,7 +610,8 @@ function renderGrid() {
             // obvious at a glance what still needs filling in.
             const needsInput = !!options && cell === '';
             const fillColor = (fillMap[r] && fillMap[r][c]) || null;
-            const inputStyle = needsInput ? ' background:#fff3b0;' : (fillColor ? (' background:' + fillColor + ';') : '');
+            const fontColor = (fontColorMap[r] && fontColorMap[r][c]) || null;
+            const inputStyle = (needsInput ? ' background:#fff3b0;' : (fillColor ? (' background:' + fillColor + ';') : '')) + (fontColor ? (' color:' + fontColor + ';') : '');
             const cellId = 'cell_' + r + '_' + c;
             // Padding alone adds ~12px to any control's rendered height, so a
             // genuinely short spacer row still needs tight padding or it'll
