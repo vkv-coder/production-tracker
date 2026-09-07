@@ -225,17 +225,17 @@ async function loadFabSteps() {
     ]);
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
-    let html = '<table class="pr-table"><tr><th>#</th><th>Step Name</th><th>Insp. Formats</th><th>Status</th><th></th></tr>';
+    let html = '<table class="pr-table" style="table-layout:fixed;"><colgroup><col style="width:6%;"><col style="width:22%;"><col style="width:18%;"><col style="width:10%;"><col style="width:44%;"></colgroup><tr><th>#</th><th>Step Name</th><th>Insp. Formats</th><th>Status</th><th></th></tr>';
     (data || []).forEach(s => {
         const jsName = s.step_name.replace(/'/g, "\\'");
         const stepFormats = s.pr_fab_step_formats || [];
         html += '<tr><td>' + s.step_order + '</td><td>' + escapeHtml(s.step_name) + '</td>';
         html += '<td>' + (stepFormats.length > 0 ? stepFormats.map(x => escapeHtml(x.pr_inspection_formats_master.code)).join(', ') : '-') + '</td>';
         html += '<td><span class="pr-badge pr-badge-' + (s.is_active ? 'accept' : 'reject') + '">' + (s.is_active ? 'Active' : 'Inactive') + '</span></td>';
-        html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
-        html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_fab_steps_master\',\'' + s.id + '\',' + s.is_active + ',loadFabSteps)">' + (s.is_active ? 'Deactivate' : 'Activate') + '</button>';
-        html += '<button class="pr-btn pr-btn-outline" onclick="toggleFabStepEditRow(\'' + s.id + '\')">Edit</button>';
-        html += '<button class="pr-btn pr-btn-danger" onclick="deleteFabStep(\'' + s.id + '\',\'' + jsName + '\')">Delete</button>';
+        html += '<td style="display:flex; gap:4px; flex-wrap:nowrap;">';
+        html += '<button class="pr-btn pr-btn-outline" style="padding:6px 8px; font-size:12px;" onclick="toggleActive(\'pr_fab_steps_master\',\'' + s.id + '\',' + s.is_active + ',loadFabSteps)">' + (s.is_active ? 'Deactivate' : 'Activate') + '</button>';
+        html += '<button class="pr-btn pr-btn-outline" style="padding:6px 8px; font-size:12px;" onclick="toggleFabStepEditRow(\'' + s.id + '\')">Edit</button>';
+        html += '<button class="pr-btn pr-btn-danger" style="padding:6px 8px; font-size:12px;" onclick="deleteFabStep(\'' + s.id + '\',\'' + jsName + '\')">Delete</button>';
         html += '</td></tr>';
 
         html += '<tr id="fabStepEditRow_' + s.id + '" style="display:' + (openFabStepIds.has(s.id) ? 'table-row' : 'none') + ';"><td colspan="5">';
@@ -489,17 +489,17 @@ async function loadPaintProcesses() {
     ]);
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
-    let html = '<table class="pr-table"><tr><th>#</th><th>Process Name</th><th>Insp. Formats</th><th>Status</th><th></th></tr>';
+    let html = '<table class="pr-table" style="table-layout:fixed;"><colgroup><col style="width:6%;"><col style="width:22%;"><col style="width:18%;"><col style="width:10%;"><col style="width:44%;"></colgroup><tr><th>#</th><th>Process Name</th><th>Insp. Formats</th><th>Status</th><th></th></tr>';
     (data || []).forEach(p => {
         const jsName = p.process_name.replace(/'/g, "\\'");
         const procFormats = p.pr_paint_process_formats || [];
         html += '<tr><td>' + p.process_order + '</td><td>' + escapeHtml(p.process_name) + '</td>';
         html += '<td>' + (procFormats.length > 0 ? procFormats.map(x => escapeHtml(x.pr_inspection_formats_master.code)).join(', ') : '-') + '</td>';
         html += '<td><span class="pr-badge pr-badge-' + (p.is_active ? 'accept' : 'reject') + '">' + (p.is_active ? 'Active' : 'Inactive') + '</span></td>';
-        html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
-        html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_paint_process_master\',\'' + p.id + '\',' + p.is_active + ',loadPaintProcesses)">' + (p.is_active ? 'Deactivate' : 'Activate') + '</button>';
-        html += '<button class="pr-btn pr-btn-outline" onclick="toggleProcessEditRow(\'' + p.id + '\')">Edit</button>';
-        html += '<button class="pr-btn pr-btn-danger" onclick="deletePaintProcess(\'' + p.id + '\',\'' + jsName + '\')">Delete</button>';
+        html += '<td style="display:flex; gap:4px; flex-wrap:nowrap;">';
+        html += '<button class="pr-btn pr-btn-outline" style="padding:6px 8px; font-size:12px;" onclick="toggleActive(\'pr_paint_process_master\',\'' + p.id + '\',' + p.is_active + ',loadPaintProcesses)">' + (p.is_active ? 'Deactivate' : 'Activate') + '</button>';
+        html += '<button class="pr-btn pr-btn-outline" style="padding:6px 8px; font-size:12px;" onclick="toggleProcessEditRow(\'' + p.id + '\')">Edit</button>';
+        html += '<button class="pr-btn pr-btn-danger" style="padding:6px 8px; font-size:12px;" onclick="deletePaintProcess(\'' + p.id + '\',\'' + jsName + '\')">Delete</button>';
         html += '</td></tr>';
 
         html += '<tr id="processEditRow_' + p.id + '" style="display:' + (openProcessIds.has(p.id) ? 'table-row' : 'none') + ';"><td colspan="5">';
