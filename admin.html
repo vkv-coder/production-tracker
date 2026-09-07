@@ -7,6 +7,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx-populate@1.21.0/browser/xlsx-populate-no-encryption.min.js"></script>
 </head>
 <body>
 
@@ -23,6 +24,8 @@
     <div class="pr-tab" data-tab="workers" onclick="switchTab('workers')">Workers</div>
     <div class="pr-tab" data-tab="jobs" onclick="switchTab('jobs')">Jobs</div>
     <div class="pr-tab" data-tab="formats" onclick="switchTab('formats')">Format</div>
+    <div class="pr-tab" data-tab="reports" onclick="switchTab('reports')">Reports</div>
+    <div class="pr-tab" data-tab="activity" onclick="switchTab('activity')">Format Activity</div>
 </div>
 
 <div class="pr-container">
@@ -105,6 +108,20 @@
         <div id="formatsList"><p class="pr-empty">Loading...</p></div>
     </div>
 
+    <!-- REPORTS -->
+    <div id="tab-reports" class="tab-content" style="display:none;">
+        <div class="pr-card">
+            <label class="pr-label">Job / Step Tracker</label>
+            <p style="font-size:13px; color:#666; margin:4px 0 10px;">Every fab and paint step across every job, with planned vs actual dates, delay reason, and an on-time/delay status column. Generated fresh from current data every time — filterable by any column once opened in Excel.</p>
+            <button class="pr-btn pr-btn-primary" id="jobTrackerBtn" onclick="generateJobTrackerReport()">Download Job Tracker Report</button>
+        </div>
+    </div>
+
+    <!-- FORMAT ACTIVITY -->
+    <div id="tab-activity" class="tab-content" style="display:none;">
+        <div id="formatActivityList"><p class="pr-empty">Loading...</p></div>
+    </div>
+
 </div>
 
 <script src="config.js"></script>
@@ -131,6 +148,7 @@ function switchTab(tab) {
     if (tab === 'workers') loadWorkersMaster();
     if (tab === 'jobs') loadJobsAdmin();
     if (tab === 'formats') loadInspectionFormats();
+    if (tab === 'activity') loadFormatActivity();
 }
 
 // ============ SHARED: inspection format select population ============
@@ -1052,6 +1070,164 @@ async function toggleActive(table, id, currentState, reloadFn) {
     const { error } = await supabaseClient.from(table).update({ is_active: !currentState }).eq('id', id);
     if (error) { alert('Error: ' + error.message); return; }
     reloadFn();
+}
+
+// ============ REPORTS: Job/Step Tracker Excel Export ============
+function computeFabStatus(row) {
+    if (!row.actual_start && !row.actual_end) return { text: 'Pending', color: 'D9D9D9' };
+    const startLate = !!(row.actual_start && row.planned_start && row.actual_start > row.planned_start);
+    const endLate = !!(row.actual_end && row.planned_end && row.actual_end > row.planned_end);
+    if (startLate || endLate) return { text: 'Delayed', color: 'F4CCCC' };
+    return { text: 'On Time', color: 'D9EAD3' };
+}
+
+async function generateJobTrackerReport() {
+    const btn = document.getElementById('jobTrackerBtn');
+    const resetBtn = () => { if (btn) { btn.disabled = false; btn.textContent = 'Download Job Tracker Report'; } };
+    if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
+
+    try {
+        const { data: jobs } = await supabaseClient.from('pr_jobs').select('id, job_no, customer_name, status').eq('company_id', session.companyId);
+        const jobMap = {};
+        (jobs || []).forEach(j => { jobMap[j.id] = j; });
+        const jobIds = Object.keys(jobMap);
+
+        const [{ data: fabRows }, { data: paintRows }] = await Promise.all([
+            jobIds.length ? supabaseClient.from('pr_fab_tracking').select('job_id, planned_start, planned_end, actual_start, actual_end, start_delay_reason, end_delay_reason, pr_fab_steps_master(step_name, step_order)').in('job_id', jobIds) : Promise.resolve({ data: [] }),
+            jobIds.length ? supabaseClient.from('pr_paint_tracking').select('job_id, start_date, stop_date, remarks, pr_paint_process_master(process_name), pr_paint_items_master(item_name)').in('job_id', jobIds) : Promise.resolve({ data: [] })
+        ]);
+
+        const rows = [];
+        (fabRows || []).forEach(r => {
+            const job = jobMap[r.job_id];
+            const status = computeFabStatus(r);
+            const reason = [r.start_delay_reason, r.end_delay_reason].filter(Boolean).join(' | ');
+            rows.push({
+                jobNo: job ? job.job_no : '', customer: job ? (job.customer_name || '') : '', jobStatus: job ? (job.status || '') : '',
+                type: 'Fab', item: '', step: r.pr_fab_steps_master ? r.pr_fab_steps_master.step_name : '',
+                plannedStart: r.planned_start || '', plannedEnd: r.planned_end || '',
+                actualStart: r.actual_start || '', actualEnd: r.actual_end || '',
+                reason: reason, status: status.text, color: status.color
+            });
+        });
+        // Paint tracking has no planned/actual split or delay-reason columns
+        // (unlike fab tracking) — Planned columns stay blank and status is
+        // N/A rather than guessed from data that doesn't exist.
+        (paintRows || []).forEach(r => {
+            const job = jobMap[r.job_id];
+            rows.push({
+                jobNo: job ? job.job_no : '', customer: job ? (job.customer_name || '') : '', jobStatus: job ? (job.status || '') : '',
+                type: 'Paint', item: r.pr_paint_items_master ? r.pr_paint_items_master.item_name : '', step: r.pr_paint_process_master ? r.pr_paint_process_master.process_name : '',
+                plannedStart: '', plannedEnd: '',
+                actualStart: r.start_date || '', actualEnd: r.stop_date || '',
+                reason: r.remarks || '', status: 'N/A', color: null
+            });
+        });
+
+        rows.sort((a, b) => (a.jobNo || '').localeCompare(b.jobNo || ''));
+
+        const workbook = await XlsxPopulate.fromBlankAsync();
+        const sheet = workbook.sheet(0);
+        sheet.name('Job Tracker');
+
+        const headers = ['Job No', 'Customer', 'Job Status', 'Type', 'Item', 'Step / Process', 'Planned Start', 'Planned End', 'Actual Start', 'Actual End', 'Delay Reason', 'On-Time Status'];
+        headers.forEach((h, c) => {
+            sheet.cell(1, c + 1).value(h).style({ bold: true, fill: '1F3864', fontColor: 'FFFFFF' });
+        });
+
+        rows.forEach((r, i) => {
+            const rn = i + 2;
+            sheet.cell(rn, 1).value(r.jobNo);
+            sheet.cell(rn, 2).value(r.customer);
+            sheet.cell(rn, 3).value(r.jobStatus);
+            sheet.cell(rn, 4).value(r.type);
+            sheet.cell(rn, 5).value(r.item);
+            sheet.cell(rn, 6).value(r.step);
+            sheet.cell(rn, 7).value(r.plannedStart);
+            sheet.cell(rn, 8).value(r.plannedEnd);
+            sheet.cell(rn, 9).value(r.actualStart);
+            sheet.cell(rn, 10).value(r.actualEnd);
+            sheet.cell(rn, 11).value(r.reason);
+            const statusCell = sheet.cell(rn, 12);
+            statusCell.value(r.status);
+            if (r.color) statusCell.style('fill', r.color);
+        });
+
+        if (rows.length > 0) {
+            sheet.range(1, 1, rows.length + 1, headers.length).autoFilter();
+        }
+        headers.forEach((h, c) => { sheet.column(c + 1).width(Math.max(12, h.length + 4)); });
+
+        const blob = await workbook.outputAsync();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'Job_Tracker_Report_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        alert('Error generating report: ' + (e && e.message ? e.message : e));
+    }
+    resetBtn();
+}
+
+// ============ FORMAT ACTIVITY (last-edited report per format) ============
+function findLastFilledRowPreview(sheet) {
+    const used = sheet.usedRange();
+    if (!used) return '(empty)';
+    const values = used.value();
+    for (let r = values.length - 1; r >= 0; r--) {
+        const row = values[r] || [];
+        const nonEmpty = row.filter(v => v !== null && v !== undefined && String(v).trim() !== '');
+        if (nonEmpty.length > 0) {
+            const text = nonEmpty.map(String).join(' | ');
+            return text.length > 120 ? text.slice(0, 120) + '...' : text;
+        }
+    }
+    return '(empty)';
+}
+
+async function loadFormatActivity() {
+    const container = document.getElementById('formatActivityList');
+    container.innerHTML = '<p class="pr-empty">Loading...</p>';
+
+    const { data: formats } = await supabaseClient.from('pr_inspection_formats_master').select('id, code, name').eq('company_id', session.companyId).eq('is_active', true).order('code');
+    if (!formats || formats.length === 0) { container.innerHTML = '<p class="pr-empty">No formats found.</p>'; return; }
+
+    container.innerHTML = '<table class="pr-table"><tr><th>Code</th><th>Name</th><th>Latest Job</th><th>Edited By</th><th>Edited At</th><th>Last Filled Row</th></tr></table>';
+    const table = container.querySelector('table');
+
+    for (const fmt of formats) {
+        const { data: reports } = await supabaseClient
+            .from('pr_inspection_reports')
+            .select('job_id, file_path, uploaded_by, uploaded_at, pr_jobs(job_no)')
+            .eq('format_id', fmt.id)
+            .not('file_path', 'is', null)
+            .order('uploaded_at', { ascending: false })
+            .limit(1);
+
+        const latest = reports && reports[0];
+        let rowHtml = '<tr><td>' + escapeHtml(fmt.code) + '</td><td>' + escapeHtml(fmt.name) + '</td>';
+        if (!latest) {
+            rowHtml += '<td colspan="4" style="color:#999;">No activity yet</td></tr>';
+        } else {
+            let preview = '(could not read)';
+            try {
+                const { data: blob } = await supabaseClient.storage.from('inspection-sheets').download(latest.file_path);
+                if (blob) {
+                    const wb = await XlsxPopulate.fromDataAsync(blob);
+                    preview = findLastFilledRowPreview(wb.sheet(0));
+                }
+            } catch (e) { preview = '(could not read)'; }
+            rowHtml += '<td>' + escapeHtml(latest.pr_jobs ? latest.pr_jobs.job_no : '-') + '</td>';
+            rowHtml += '<td>' + escapeHtml(latest.uploaded_by || '-') + '</td>';
+            rowHtml += '<td>' + (latest.uploaded_at ? new Date(latest.uploaded_at).toLocaleString() : '-') + '</td>';
+            rowHtml += '<td style="font-size:12px; color:#444;">' + escapeHtml(preview) + '</td></tr>';
+        }
+        table.insertAdjacentHTML('beforeend', rowHtml);
+    }
 }
 
 if (session) loadFabSteps();
