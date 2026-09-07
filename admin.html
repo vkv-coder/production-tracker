@@ -375,8 +375,11 @@ async function saveFabStepEdit(id, currentOrder) {
 
 async function deleteFabStep(id, name) {
     if (!confirm('Delete fab step "' + name + '" permanently?')) return;
+    const { data: stepRow } = await supabaseClient.from('pr_fab_steps_master').select('step_order').eq('id', id).maybeSingle();
+    const deletedOrder = stepRow ? stepRow.step_order : null;
+
     const { error } = await supabaseClient.from('pr_fab_steps_master').delete().eq('id', id);
-    if (!error) { loadFabSteps(); return; }
+    if (!error) { await shiftFabStepsDownAfterDelete(deletedOrder); loadFabSteps(); return; }
 
     const { count } = await supabaseClient.from('pr_fab_tracking').select('id', { count: 'exact', head: true }).eq('fab_step_id', id);
     const forceMsg = 'This step is used in ' + (count || 'some') + ' job(s)\' tracking data, so it can\'t be deleted directly.\n\nForce delete will PERMANENTLY remove this step\'s records (dates, remarks, inspection status, worker/inspector assignments, any inspection sheet) from EVERY job that has it. This cannot be undone.\n\nForce delete anyway?';
@@ -387,7 +390,24 @@ async function deleteFabStep(id, name) {
 
     const { error: retryError } = await supabaseClient.from('pr_fab_steps_master').delete().eq('id', id);
     if (retryError) { alert('Error: ' + retryError.message); return; }
+    await shiftFabStepsDownAfterDelete(deletedOrder);
     loadFabSteps();
+}
+
+// Closes the numbering gap left behind by a delete, mirroring the shift-up
+// addFabStep already does on insert — every step after the deleted one's
+// position moves down by 1 so Sr. No. stays contiguous.
+async function shiftFabStepsDownAfterDelete(deletedOrder) {
+    if (deletedOrder === null || deletedOrder === undefined) return;
+    const { data: toShift } = await supabaseClient
+        .from('pr_fab_steps_master')
+        .select('id, step_order')
+        .eq('company_id', session.companyId)
+        .gt('step_order', deletedOrder)
+        .order('step_order', { ascending: true });
+    for (const s of (toShift || [])) {
+        await supabaseClient.from('pr_fab_steps_master').update({ step_order: s.step_order - 1 }).eq('id', s.id);
+    }
 }
 
 async function addFabStep() {
@@ -642,8 +662,12 @@ async function saveProcessEdit(id, itemId, currentOrder) {
 
 async function deletePaintProcess(id, name) {
     if (!confirm('Delete paint process "' + name + '" permanently?')) return;
+    const { data: procRow } = await supabaseClient.from('pr_paint_process_master').select('process_order, paint_item_id').eq('id', id).maybeSingle();
+    const deletedOrder = procRow ? procRow.process_order : null;
+    const itemId = procRow ? procRow.paint_item_id : null;
+
     const { error } = await supabaseClient.from('pr_paint_process_master').delete().eq('id', id);
-    if (!error) { loadPaintProcesses(); return; }
+    if (!error) { await shiftPaintProcessesDownAfterDelete(itemId, deletedOrder); loadPaintProcesses(); return; }
 
     const { count } = await supabaseClient.from('pr_paint_tracking').select('id', { count: 'exact', head: true }).eq('process_id', id);
     const forceMsg = 'This process is used in ' + (count || 'some') + ' job(s)\' tracking data, so it can\'t be deleted directly.\n\nForce delete will PERMANENTLY remove this process\'s records (dates, remarks, any inspection sheet) from EVERY job that has it. This cannot be undone.\n\nForce delete anyway?';
@@ -654,7 +678,21 @@ async function deletePaintProcess(id, name) {
 
     const { error: retryError } = await supabaseClient.from('pr_paint_process_master').delete().eq('id', id);
     if (retryError) { alert('Error: ' + retryError.message); return; }
+    await shiftPaintProcessesDownAfterDelete(itemId, deletedOrder);
     loadPaintProcesses();
+}
+
+async function shiftPaintProcessesDownAfterDelete(itemId, deletedOrder) {
+    if (!itemId || deletedOrder === null || deletedOrder === undefined) return;
+    const { data: toShift } = await supabaseClient
+        .from('pr_paint_process_master')
+        .select('id, process_order')
+        .eq('paint_item_id', itemId)
+        .gt('process_order', deletedOrder)
+        .order('process_order', { ascending: true });
+    for (const p of (toShift || [])) {
+        await supabaseClient.from('pr_paint_process_master').update({ process_order: p.process_order - 1 }).eq('id', p.id);
+    }
 }
 
 async function addPaintProcess() {
