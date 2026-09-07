@@ -52,8 +52,16 @@ let currentSheetIndex = 0;
 let validationMap = null;
 let validationDiagnostic = '';
 
-function goBack() {
-    window.location.href = (session.role === 'Partner') ? 'partner-home.html' : ('job-detail.html?job=' + jobId);
+let lockHeld = false;
+
+async function goBack() {
+    const dest = (session.role === 'Partner') ? 'partner-home.html' : ('job-detail.html?job=' + jobId);
+    if (lockHeld && report) {
+        try {
+            await supabaseClient.from('pr_inspection_reports').update({ locked_by: null, locked_token: null, locked_at: null }).eq('id', report.id).eq('locked_token', getLockToken());
+        } catch (e) { /* best-effort — the timeout still clears it either way */ }
+    }
+    window.location.href = dest;
 }
 
 async function init() {
@@ -76,7 +84,55 @@ async function init() {
     document.getElementById('reportHeader').textContent = format ? (format.code + ' — ' + format.name) : 'Inspection Sheet';
     document.getElementById('subHeader').textContent = (jobRecord ? jobRecord.job_no : '');
 
+    const gotLock = await tryClaimLock();
+    if (!gotLock) {
+        document.getElementById('reportCard').innerHTML =
+            '<div class="pr-card"><p style="font-weight:600; color:#b8860b; margin-top:0;">⚠️ Locked</p>' +
+            '<p>This sheet is currently being edited by <b>' + escapeHtml(report.locked_by || 'another user') + '</b>. Please wait until they finish, then try again.</p>' +
+            '<button class="pr-btn pr-btn-primary" style="margin-top:8px;" onclick="location.reload()">Check Again</button></div>';
+        return;
+    }
+
     await loadSheetIntoGrid();
+}
+
+// Whoever opens the report first claims it; anyone else gets held out with a
+// hard "wait until they finish" screen — never a silent last-save-wins
+// overwrite between two people editing the same sheet at once. The lock
+// clears the moment the holder saves (see saveSheetGrid), or self-expires
+// after LOCK_TIMEOUT_MS in case someone closed their tab without saving.
+// The .or(...) clause makes the claim atomic at the database level: it can
+// only succeed if the row is still unlocked/expired/already mine by the time
+// Postgres evaluates it, so two people opening it at the same instant can't
+// both believe they got the lock.
+const LOCK_TIMEOUT_MS = 15 * 60 * 1000;
+
+function getLockToken() {
+    let token = sessionStorage.getItem('pr_lock_token');
+    if (!token) {
+        token = crypto.randomUUID();
+        sessionStorage.setItem('pr_lock_token', token);
+    }
+    return token;
+}
+
+async function tryClaimLock() {
+    const myToken = getLockToken();
+    const expiryThreshold = new Date(Date.now() - LOCK_TIMEOUT_MS).toISOString();
+    const { data: claimed } = await supabaseClient
+        .from('pr_inspection_reports')
+        .update({ locked_by: session.name, locked_token: myToken, locked_at: new Date().toISOString() })
+        .eq('id', report.id)
+        .or('locked_token.eq.' + myToken + ',locked_at.is.null,locked_at.lt.' + expiryThreshold)
+        .select('*');
+    if (claimed && claimed.length > 0) {
+        report = claimed[0];
+        lockHeld = true;
+        return true;
+    }
+    const { data: fresh } = await supabaseClient.from('pr_inspection_reports').select('locked_by').eq('id', report.id).maybeSingle();
+    if (fresh) report.locked_by = fresh.locked_by;
+    return false;
 }
 
 function blankGrid() {
@@ -740,13 +796,14 @@ async function saveSheetGrid() {
 
     const { data: updated, error } = await supabaseClient
         .from('pr_inspection_reports')
-        .update({ file_path: path, file_name: fileName, uploaded_by: session.name, uploaded_at: new Date().toISOString() })
+        .update({ file_path: path, file_name: fileName, uploaded_by: session.name, uploaded_at: new Date().toISOString(), locked_by: null, locked_token: null, locked_at: null })
         .eq('id', report.id)
         .select('*')
         .single();
     if (error) { alert('Error saving: ' + error.message); resetBtn(); return; }
 
     report = updated;
+    lockHeld = false;
     renderGrid();
 }
 
