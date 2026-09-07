@@ -600,7 +600,35 @@ async function togglePaintInspector(trackingId, inspectorId, checked) {
         const { error } = await supabaseClient.from('pr_paint_tracking_inspectors').delete().eq('paint_tracking_id', trackingId).eq('inspector_id', inspectorId);
         if (error) { alert('Error removing inspector: ' + error.message); return; }
     }
+    await syncInspectorAcrossPaintItems(trackingId, inspectorId, checked);
     loadPaintTable();
+}
+
+// The same inspector does the same named process across every paint item in
+// a job (e.g. "Final Inspection" on Tank, Conservator-Cable and Top Cover
+// are the same check by the same person) — assigning/removing on one item's
+// process applies to the matching-named process on every sibling paint item
+// in this job too, instead of repeating the same tap once per tab.
+async function syncInspectorAcrossPaintItems(trackingId, inspectorId, checked) {
+    const { data: current } = await supabaseClient.from('pr_paint_tracking').select('job_id, pr_paint_process_master(process_name)').eq('id', trackingId).maybeSingle();
+    if (!current || !current.pr_paint_process_master) return;
+    const processName = current.pr_paint_process_master.process_name;
+
+    const { data: siblings } = await supabaseClient
+        .from('pr_paint_tracking')
+        .select('id, pr_paint_process_master(process_name)')
+        .eq('job_id', current.job_id)
+        .neq('id', trackingId);
+
+    const matches = (siblings || []).filter(s => s.pr_paint_process_master && s.pr_paint_process_master.process_name === processName);
+    for (const s of matches) {
+        if (checked) {
+            const { error } = await supabaseClient.from('pr_paint_tracking_inspectors').insert({ paint_tracking_id: s.id, inspector_id: inspectorId });
+            if (error && error.code !== '23505') { /* best-effort — don't block the rest over one failure */ }
+        } else {
+            await supabaseClient.from('pr_paint_tracking_inspectors').delete().eq('paint_tracking_id', s.id).eq('inspector_id', inspectorId);
+        }
+    }
 }
 
 

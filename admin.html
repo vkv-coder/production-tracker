@@ -521,7 +521,45 @@ async function toggleProcessFormat(processId, formatId, checked) {
         const { error } = await supabaseClient.from('pr_paint_process_formats').delete().eq('process_id', processId).eq('format_id', formatId);
         if (error) { alert('Error: ' + error.message); return; }
     }
+    await syncFormatAcrossPaintItems(processId, formatId, checked);
     loadPaintProcesses();
+}
+
+// The same format/default-inspector applies to the same named process
+// across every paint item (e.g. "Final Inspection" is the same checklist by
+// the same inspector whether it's Tank, Conservator-Cable or Top Cover) —
+// setting it on one item's process master applies to the matching-named
+// process on every other paint item in this company too.
+async function getSiblingPaintProcessIds(processId) {
+    const { data: current } = await supabaseClient.from('pr_paint_process_master').select('process_name').eq('id', processId).maybeSingle();
+    if (!current) return [];
+
+    const { data: companyItems } = await supabaseClient.from('pr_paint_items_master').select('id').eq('company_id', session.companyId);
+    const itemIds = (companyItems || []).map(i => i.id);
+    if (itemIds.length === 0) return [];
+
+    const { data: siblingProcesses } = await supabaseClient
+        .from('pr_paint_process_master')
+        .select('id')
+        .eq('process_name', current.process_name)
+        .in('paint_item_id', itemIds)
+        .neq('id', processId);
+    return siblingProcesses || [];
+}
+
+async function syncFormatAcrossPaintItems(processId, formatId, checked) {
+    const siblings = await getSiblingPaintProcessIds(processId);
+    for (const p of siblings) {
+        if (checked) {
+            const { error } = await supabaseClient.from('pr_paint_process_formats').insert({ process_id: p.id, format_id: formatId });
+            if (!error || error.code === '23505') {
+                const { data: trackingRows } = await supabaseClient.from('pr_paint_tracking').select('id, job_id').eq('process_id', p.id);
+                await backfillFormatToExistingTrackings(formatId, trackingRows || [], 'paint_tracking_id', 'pr_paint_tracking_reports');
+            }
+        } else {
+            await supabaseClient.from('pr_paint_process_formats').delete().eq('process_id', p.id).eq('format_id', formatId);
+        }
+    }
 }
 
 async function toggleProcessDefaultInspector(processId, inspectorId, checked) {
@@ -531,6 +569,14 @@ async function toggleProcessDefaultInspector(processId, inspectorId, checked) {
     } else {
         const { error } = await supabaseClient.from('pr_paint_process_default_inspectors').delete().eq('process_id', processId).eq('inspector_id', inspectorId);
         if (error) { alert('Error: ' + error.message); return; }
+    }
+    const siblings = await getSiblingPaintProcessIds(processId);
+    for (const p of siblings) {
+        if (checked) {
+            await supabaseClient.from('pr_paint_process_default_inspectors').insert({ process_id: p.id, inspector_id: inspectorId });
+        } else {
+            await supabaseClient.from('pr_paint_process_default_inspectors').delete().eq('process_id', p.id).eq('inspector_id', inspectorId);
+        }
     }
     loadPaintProcesses();
 }
