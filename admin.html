@@ -1129,36 +1129,46 @@ async function loadIsoFormats() {
     ]);
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
-    let html = '<table class="pr-table"><tr><th>Code</th><th>Name</th><th>Type</th><th>Template</th><th>Status</th><th></th></tr>';
+    let html = '<table class="pr-table"><tr><th>Code</th><th>Name</th><th>Type</th><th>Assigned To</th><th>Template</th><th>Status</th><th></th></tr>';
     (data || []).forEach(f => {
         const jsCode = f.code.replace(/'/g, "\\'");
-        const assignedSet = new Set((assignments || []).filter(a => a.format_id === f.id).map(a => a.inspector_id));
+        const assignedInsp = inspectors.filter(i => (assignments || []).some(a => a.format_id === f.id && a.inspector_id === i.id));
+        const assignedSet = new Set(assignedInsp.map(i => i.id));
+        const isProcess = f.scope === 'process';
         html += '<tr><td>' + escapeHtml(f.code) + '</td><td>' + escapeHtml(f.name) + '</td>';
-        html += '<td>' + (f.scope === 'process' ? 'Process' : 'ISO') + '</td>';
+        html += '<td>' + (isProcess ? 'Process' : 'ISO') + '</td>';
+        html += '<td>' + (assignedInsp.length > 0 ? escapeHtml(assignedInsp.map(i => i.inspector_name).join(', ')) : '<span style="color:#999;">None</span>') + '</td>';
         html += '<td>' + (f.template_file_path ? '<a href="#" onclick="viewIsoFormatTemplate(\'' + f.id + '\'); return false;" style="color:#1e3a5f; text-decoration:underline;">' + escapeHtml(f.template_file_name || 'view') + '</a>' : '<span style="color:#d9534f;">not uploaded</span>') + '</td>';
         html += '<td><span class="pr-badge pr-badge-' + (f.is_active ? 'accept' : 'reject') + '">' + (f.is_active ? 'Active' : 'Inactive') + '</span></td>';
         html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
         html += '<a class="pr-btn pr-btn-primary" href="inspection-report.html?isoformat=' + f.id + '" style="text-decoration:none;">Open Sheet</a>';
         html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_inspection_formats_master\',\'' + f.id + '\',' + f.is_active + ',loadIsoFormats)">' + (f.is_active ? 'Deactivate' : 'Activate') + '</button>';
-        html += '<button class="pr-btn pr-btn-outline" onclick="toggleIsoFormatEditRow(\'' + f.id + '\')">Edit</button>';
+        html += '<button class="pr-btn pr-btn-outline" onclick="toggleIsoFormatEditRow(\'' + f.id + '\')">' + (isProcess ? 'Assign' : 'Edit') + '</button>';
         // Delete only offered here for formats actually created as ISO - a
         // process format shown in this list for assignment purposes should
         // only ever be deleted from its own Format tab, so a step/process
         // attachment elsewhere can't be broken from the wrong screen.
-        if (f.scope === 'iso') {
+        if (!isProcess) {
             html += '<button class="pr-btn pr-btn-danger" onclick="deleteIsoFormat(\'' + f.id + '\',\'' + jsCode + '\')">Delete</button>';
         }
         html += '</td></tr>';
 
-        html += '<tr id="isoFormatEditRow_' + f.id + '" style="display:none;"><td colspan="6">';
+        html += '<tr id="isoFormatEditRow_' + f.id + '" style="display:none;"><td colspan="7">';
         html += '<div class="pr-card">';
-        html += '<label class="pr-label">Code</label><input type="text" class="pr-input" id="isoFormatCode_' + f.id + '" value="' + escapeHtml(f.code) + '">';
-        html += '<label class="pr-label">Name</label><input type="text" class="pr-input" id="isoFormatName_' + f.id + '" value="' + escapeHtml(f.name) + '">';
-        html += '<div style="display:flex; gap:8px; margin-top:8px;">';
-        html += '<button class="pr-btn pr-btn-primary" onclick="saveIsoFormatEdit(\'' + f.id + '\')">Save Changes</button>';
-        html += '<button class="pr-btn pr-btn-outline" onclick="toggleIsoFormatEditRow(\'' + f.id + '\')">Cancel</button>';
-        html += '</div>';
-        html += '<hr style="margin:14px 0; border:none; border-top:1px solid #ddd;">';
+        // Code/Name/Template management only shown for formats actually
+        // created here - a process format's code/name/template belongs to
+        // the Format tab, so only its staff assignment is editable from here.
+        if (isProcess) {
+            html += '<p style="font-size:13px; color:#666; margin-top:0;">Code, name and template for this format are managed in the <b>Format</b> tab. Only staff assignment is editable here.</p>';
+        } else {
+            html += '<label class="pr-label">Code</label><input type="text" class="pr-input" id="isoFormatCode_' + f.id + '" value="' + escapeHtml(f.code) + '">';
+            html += '<label class="pr-label">Name</label><input type="text" class="pr-input" id="isoFormatName_' + f.id + '" value="' + escapeHtml(f.name) + '">';
+            html += '<div style="display:flex; gap:8px; margin-top:8px;">';
+            html += '<button class="pr-btn pr-btn-primary" onclick="saveIsoFormatEdit(\'' + f.id + '\')">Save Changes</button>';
+            html += '<button class="pr-btn pr-btn-outline" onclick="toggleIsoFormatEditRow(\'' + f.id + '\')">Cancel</button>';
+            html += '</div>';
+            html += '<hr style="margin:14px 0; border:none; border-top:1px solid #ddd;">';
+        }
         html += '<label class="pr-label">Assigned Staff (can view and fill this format)</label>';
         html += '<div style="max-height:180px; overflow-y:auto; border:1px solid #ccc; border-radius:6px; padding:6px 10px; margin-bottom:10px;">';
         if (inspectors.length === 0) { html += '<span style="font-size:12px; color:#999;">No active inspectors</span>'; }
@@ -1170,29 +1180,33 @@ async function loadIsoFormats() {
             html += '</label>';
         });
         html += '</div>';
-        html += '<hr style="margin:14px 0; border:none; border-top:1px solid #ddd;">';
-        html += '<label class="pr-label">Sheet Template</label>';
-        if (f.template_file_path) {
-            html += '<p style="font-size:14px; margin:4px 0;">' + escapeHtml(f.template_file_name || 'file') + '</p>';
-            html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">';
-            html += '<button class="pr-btn pr-btn-outline" onclick="viewIsoFormatTemplate(\'' + f.id + '\')">View / Verify</button>';
-            html += '<button class="pr-btn pr-btn-danger" onclick="deleteIsoFormatTemplate(\'' + f.id + '\')">Remove Template</button>';
-            html += '</div>';
-            html += '<label class="pr-label">Replace Template</label>';
+        if (isProcess) {
+            html += '<div style="display:flex; gap:8px; margin-top:8px;"><button class="pr-btn pr-btn-outline" onclick="toggleIsoFormatEditRow(\'' + f.id + '\')">Close</button></div>';
+        } else {
+            html += '<hr style="margin:14px 0; border:none; border-top:1px solid #ddd;">';
+            html += '<label class="pr-label">Sheet Template</label>';
+            if (f.template_file_path) {
+                html += '<p style="font-size:14px; margin:4px 0;">' + escapeHtml(f.template_file_name || 'file') + '</p>';
+                html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">';
+                html += '<button class="pr-btn pr-btn-outline" onclick="viewIsoFormatTemplate(\'' + f.id + '\')">View / Verify</button>';
+                html += '<button class="pr-btn pr-btn-danger" onclick="deleteIsoFormatTemplate(\'' + f.id + '\')">Remove Template</button>';
+                html += '</div>';
+                html += '<label class="pr-label">Replace Template</label>';
+            }
+            const otherTemplated = (templatedFormats || []).filter(t => t.id !== f.id);
+            if (otherTemplated.length > 0) {
+                html += '<label class="pr-label">Copy Template From Existing Format</label>';
+                html += '<select class="pr-select" onchange="if(this.value){copyTemplateFromFormat(\'' + f.id + '\',this.value); this.value=\'\';}">';
+                html += '<option value="">-- Select a format --</option>';
+                otherTemplated.forEach(t => {
+                    html += '<option value="' + t.id + '">' + escapeHtml(t.code) + ' — ' + escapeHtml(t.name) + ' (' + escapeHtml(t.template_file_name || 'file') + ')</option>';
+                });
+                html += '</select>';
+                html += '<p style="font-size:12px; color:#666; margin:2px 0 10px;">Or upload a fresh file instead:</p>';
+            }
+            html += '<input type="file" class="pr-input" id="isoFormatTemplateInput_' + f.id + '">';
+            html += '<button class="pr-btn pr-btn-primary" style="margin-top:8px;" onclick="uploadIsoFormatTemplate(\'' + f.id + '\')">' + (f.template_file_path ? 'Upload Replacement' : 'Upload Template') + '</button>';
         }
-        const otherTemplated = (templatedFormats || []).filter(t => t.id !== f.id);
-        if (otherTemplated.length > 0) {
-            html += '<label class="pr-label">Copy Template From Existing Format</label>';
-            html += '<select class="pr-select" onchange="if(this.value){copyTemplateFromFormat(\'' + f.id + '\',this.value); this.value=\'\';}">';
-            html += '<option value="">-- Select a format --</option>';
-            otherTemplated.forEach(t => {
-                html += '<option value="' + t.id + '">' + escapeHtml(t.code) + ' — ' + escapeHtml(t.name) + ' (' + escapeHtml(t.template_file_name || 'file') + ')</option>';
-            });
-            html += '</select>';
-            html += '<p style="font-size:12px; color:#666; margin:2px 0 10px;">Or upload a fresh file instead:</p>';
-        }
-        html += '<input type="file" class="pr-input" id="isoFormatTemplateInput_' + f.id + '">';
-        html += '<button class="pr-btn pr-btn-primary" style="margin-top:8px;" onclick="uploadIsoFormatTemplate(\'' + f.id + '\')">' + (f.template_file_path ? 'Upload Replacement' : 'Upload Template') + '</button>';
         html += '</div>';
         html += '</td></tr>';
     });
