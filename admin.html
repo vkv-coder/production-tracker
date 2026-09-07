@@ -1034,7 +1034,7 @@ async function addInspectionFormat() {
     const name = document.getElementById('newFormatName').value.trim();
     if (!code || !name) { alert('Enter format code and name'); return; }
     const { error } = await supabaseClient.from('pr_inspection_formats_master').insert({ company_id: session.companyId, code: code, name: name, scope: 'process' });
-    if (error) { alert('Error: ' + error.message); return; }
+    if (error) { alert(error.code === '23505' ? 'A format with code "' + code + '" already exists (check both the Format and ISO Format tabs) — please use a different code.' : ('Error: ' + error.message)); return; }
     document.getElementById('newFormatCode').value = '';
     document.getElementById('newFormatName').value = '';
     loadInspectionFormats();
@@ -1189,7 +1189,7 @@ async function addIsoFormat() {
     const name = document.getElementById('newIsoFormatName').value.trim();
     if (!code || !name) { alert('Enter format code and name'); return; }
     const { error } = await supabaseClient.from('pr_inspection_formats_master').insert({ company_id: session.companyId, code: code, name: name, scope: 'iso' });
-    if (error) { alert('Error: ' + error.message); return; }
+    if (error) { alert(error.code === '23505' ? 'A format with code "' + code + '" already exists (check both the Format and ISO Format tabs) — please use a different code.' : ('Error: ' + error.message)); return; }
     document.getElementById('newIsoFormatCode').value = '';
     document.getElementById('newIsoFormatName').value = '';
     loadIsoFormats();
