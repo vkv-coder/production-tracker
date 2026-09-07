@@ -617,16 +617,22 @@ function renderGrid() {
             // genuinely short spacer row still needs tight padding or it'll
             // look thick regardless of the height we ask for.
             const vPad = cellHeight < 20 ? 1 : 6;
-            html += '<td' + spanAttrs + ' style="padding:0; border:1px solid #888; vertical-align:top;">';
+            // Width/height/color live on the <td> itself (the real cell
+            // boundary) — the inner control is width:100%/height:100% so it
+            // always fills the <td> exactly, even if the browser renders that
+            // table column wider than this cellWidth because some other row
+            // needed more space. Sizing only the inner control left the <td>'s
+            // own blank background exposed as a gap around it in that case.
+            html += '<td' + spanAttrs + ' style="padding:0; border:1px solid #888; vertical-align:top; width:' + cellWidth + 'px; min-width:' + cellWidth + 'px; height:' + cellHeight + 'px;' + inputStyle + '">';
             if (options) {
-                html += '<select id="' + cellId + '" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" onkeydown="handleCellKeydown(event,' + r + ',' + c + ')" style="border:none; padding:' + vPad + 'px 8px; font-size:13px; width:' + cellWidth + 'px; min-width:' + cellWidth + 'px; height:' + cellHeight + 'px; min-height:' + cellHeight + 'px;' + inputStyle + '">';
+                html += '<select id="' + cellId + '" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" onkeydown="handleCellKeydown(event,' + r + ',' + c + ')" style="border:none; background:transparent; color:inherit; padding:' + vPad + 'px 8px; font-size:13px; width:100%; height:' + cellHeight + 'px; min-height:' + cellHeight + 'px; box-sizing:border-box; display:block;">';
                 html += '<option value=""' + (cell === '' ? ' selected' : '') + '></option>';
                 options.forEach(opt => {
                     html += '<option value="' + escapeHtml(opt) + '"' + (cell === opt ? ' selected' : '') + '>' + escapeHtml(opt) + '</option>';
                 });
                 html += '</select>';
             } else {
-                html += '<textarea id="' + cellId + '" rows="1" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" onkeydown="handleCellKeydown(event,' + r + ',' + c + ')" oninput="autoGrowCell(this)" style="border:none; padding:' + vPad + 'px 8px; font-size:13px; width:' + cellWidth + 'px; min-width:' + cellWidth + 'px; height:' + cellHeight + 'px; min-height:' + cellHeight + 'px; white-space:pre-wrap; overflow-wrap:break-word; resize:none; overflow:hidden; font-family:inherit; display:block;' + inputStyle + '">' + escapeHtml(cell) + '</textarea>';
+                html += '<textarea id="' + cellId + '" rows="1" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" onkeydown="handleCellKeydown(event,' + r + ',' + c + ')" oninput="autoGrowCell(this)" style="border:none; background:transparent; color:inherit; padding:' + vPad + 'px 8px; font-size:13px; width:100%; height:' + cellHeight + 'px; min-height:' + cellHeight + 'px; white-space:pre-wrap; overflow-wrap:break-word; resize:none; overflow:hidden; font-family:inherit; display:block; box-sizing:border-box;">' + escapeHtml(cell) + '</textarea>';
             }
             html += '</td>';
         });
@@ -648,10 +654,13 @@ function updateCell(r, c, value) {
         }
     }
     // Drop the "needs input" highlight the moment a dropdown is filled, without
-    // waiting for a full re-render.
+    // waiting for a full re-render. Background now lives on the <td>, not the
+    // select itself — restore the file's own fill color (if any) rather than
+    // just blanking it.
     const el = document.getElementById('cell_' + r + '_' + c);
-    if (el && el.tagName === 'SELECT') {
-        el.style.background = value === '' ? '#fff3b0' : '';
+    if (el && el.tagName === 'SELECT' && el.parentElement) {
+        const fillColor = (fillMap[r] && fillMap[r][c]) || '';
+        el.parentElement.style.background = value === '' ? '#fff3b0' : fillColor;
     }
 }
 
