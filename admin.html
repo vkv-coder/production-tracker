@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx-populate@1.21.0/browser/xlsx-populate-no-encryption.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
 <body>
 
@@ -1174,6 +1175,8 @@ async function generateJobTrackerReport() {
 }
 
 // ============ FORMAT ACTIVITY (last-edited report per format) ============
+// Fallback for formats with no dropdown-list columns at all: just the last
+// row with any non-blank cell.
 function findLastFilledRowPreview(sheet) {
     const used = sheet.usedRange();
     if (!used) return '(empty)';
@@ -1183,10 +1186,110 @@ function findLastFilledRowPreview(sheet) {
         const nonEmpty = row.filter(v => v !== null && v !== undefined && String(v).trim() !== '');
         if (nonEmpty.length > 0) {
             const text = nonEmpty.map(String).join(' | ');
-            return text.length > 120 ? text.slice(0, 120) + '...' : text;
+            return text.length > 150 ? text.slice(0, 150) + '...' : text;
         }
     }
     return '(empty)';
+}
+
+function parseCellRefAA(ref) {
+    const m = ref.match(/^\$?([A-Z]+)\$?(\d+)$/i);
+    if (!m) return null;
+    let col = 0;
+    const letters = m[1].toUpperCase();
+    for (let i = 0; i < letters.length; i++) col = col * 26 + (letters.charCodeAt(i) - 64);
+    return { row: parseInt(m[2], 10), col: col };
+}
+
+function isAddressInAnySqref(absRow, absCol, sqrefs) {
+    return sqrefs.some(sqref => sqref.split(/\s+/).some(part => {
+        const bits = part.split(':');
+        const start = parseCellRefAA(bits[0]);
+        if (!start) return false;
+        const end = bits[1] ? parseCellRefAA(bits[1]) : start;
+        if (!end) return false;
+        const minRow = Math.min(start.row, end.row), maxRow = Math.max(start.row, end.row);
+        const minCol = Math.min(start.col, end.col), maxCol = Math.max(start.col, end.col);
+        return absRow >= minRow && absRow <= maxRow && absCol >= minCol && absCol <= maxCol;
+    }));
+}
+
+// Same raw-XML dataValidation read as inspection-report.html (cell.dataValidation()
+// proved unreliable there) — just the sqref ranges for one sheet, not the resolved
+// option lists, since here we only need to know which cells are the OK/NOT-OK
+// dropdown inputs, not what their choices are.
+async function extractListValidationsForSheet(blob, sheetName) {
+    try {
+        const zip = await JSZip.loadAsync(blob);
+        const parser = new DOMParser();
+        const workbookXmlFile = zip.file('xl/workbook.xml');
+        if (!workbookXmlFile) return [];
+        const workbookDoc = parser.parseFromString(await workbookXmlFile.async('string'), 'application/xml');
+        const sheetNode = Array.from(workbookDoc.getElementsByTagName('sheet')).find(n => n.getAttribute('name') === sheetName);
+        if (!sheetNode) return [];
+
+        const relsMap = {};
+        const relsFile = zip.file('xl/_rels/workbook.xml.rels');
+        if (relsFile) {
+            const relsDoc = parser.parseFromString(await relsFile.async('string'), 'application/xml');
+            Array.from(relsDoc.getElementsByTagName('Relationship')).forEach(rel => {
+                relsMap[rel.getAttribute('Id')] = rel.getAttribute('Target');
+            });
+        }
+
+        const rId = sheetNode.getAttribute('r:id') || sheetNode.getAttribute('id');
+        const target = relsMap[rId];
+        if (!target) return [];
+        const sheetFile = zip.file('xl/' + target);
+        if (!sheetFile) return [];
+        const sheetDoc = parser.parseFromString(await sheetFile.async('string'), 'application/xml');
+        const entries = [];
+        Array.from(sheetDoc.getElementsByTagName('dataValidation')).forEach(dv => {
+            if (dv.getAttribute('type') !== 'list') return;
+            const sqref = dv.getAttribute('sqref');
+            if (sqref) entries.push(sqref);
+        });
+        return entries;
+    } catch (e) {
+        return [];
+    }
+}
+
+// Static template text (headers, criteria descriptions) fills nearly every
+// row whether or not an inspection actually happened there, so "last
+// non-blank row" almost always just returns a template row, not the last
+// real result. Find the last row where a dropdown-validated cell (the actual
+// OK/NOT-OK input) has a value instead, and flag it if that value reads like
+// a failure, so a NOT OK result is visible at a glance.
+async function findLastInspectedRow(blob, sheet) {
+    const used = sheet.usedRange();
+    if (!used) return { text: '(empty)', flagged: false };
+    const sqrefs = await extractListValidationsForSheet(blob, sheet.name());
+    if (sqrefs.length === 0) {
+        return { text: findLastFilledRowPreview(sheet), flagged: false };
+    }
+
+    const startCell = used.startCell();
+    const startRow = startCell.rowNumber();
+    const startCol = startCell.columnNumber();
+    const values = used.value();
+
+    for (let r = values.length - 1; r >= 0; r--) {
+        const row = values[r] || [];
+        let resultVal = null;
+        for (let c = 0; c < row.length; c++) {
+            const v = row[c];
+            if (v === null || v === undefined || String(v).trim() === '') continue;
+            if (isAddressInAnySqref(startRow + r, startCol + c, sqrefs)) { resultVal = String(v); break; }
+        }
+        if (resultVal !== null) {
+            const nonEmpty = row.filter(v => v !== null && v !== undefined && String(v).trim() !== '');
+            let text = nonEmpty.map(String).join(' | ');
+            if (text.length > 150) text = text.slice(0, 150) + '...';
+            return { text: text, flagged: /not\s*ok|fail|reject/i.test(resultVal) };
+        }
+    }
+    return { text: 'No inspection entries recorded yet', flagged: false };
 }
 
 async function loadFormatActivity() {
@@ -1214,17 +1317,20 @@ async function loadFormatActivity() {
             rowHtml += '<td colspan="4" style="color:#999;">No activity yet</td></tr>';
         } else {
             let preview = '(could not read)';
+            let flagged = false;
             try {
                 const { data: blob } = await supabaseClient.storage.from('inspection-sheets').download(latest.file_path);
                 if (blob) {
                     const wb = await XlsxPopulate.fromDataAsync(blob);
-                    preview = findLastFilledRowPreview(wb.sheet(0));
+                    const result = await findLastInspectedRow(blob, wb.sheet(0));
+                    preview = result.text;
+                    flagged = result.flagged;
                 }
             } catch (e) { preview = '(could not read)'; }
             rowHtml += '<td>' + escapeHtml(latest.pr_jobs ? latest.pr_jobs.job_no : '-') + '</td>';
             rowHtml += '<td>' + escapeHtml(latest.uploaded_by || '-') + '</td>';
             rowHtml += '<td>' + (latest.uploaded_at ? new Date(latest.uploaded_at).toLocaleString() : '-') + '</td>';
-            rowHtml += '<td style="font-size:12px; color:#444;">' + escapeHtml(preview) + '</td></tr>';
+            rowHtml += '<td style="font-size:12px;' + (flagged ? ' background:#fde2e1; color:#a8201a; font-weight:600;' : ' color:#444;') + '">' + (flagged ? '⚠️ ' : '') + escapeHtml(preview) + '</td></tr>';
         }
         table.insertAdjacentHTML('beforeend', rowHtml);
     }
