@@ -20,6 +20,7 @@
 <div class="pr-tabs">
     <div class="pr-tab active" data-tab="fab" onclick="switchTab('fab')">Fab Steps</div>
     <div class="pr-tab" data-tab="paint" onclick="switchTab('paint')">Paint</div>
+    <div class="pr-tab" data-tab="iso" onclick="switchTab('iso')">ISO Format</div>
     <div class="pr-tab" data-tab="units" onclick="switchTab('units')">Units</div>
     <div class="pr-tab" data-tab="inspectors" onclick="switchTab('inspectors')">Inspectors</div>
     <div class="pr-tab" data-tab="workers" onclick="switchTab('workers')">Workers</div>
@@ -59,6 +60,17 @@
             <button class="pr-btn pr-btn-primary" onclick="addPaintProcess()">Add Process</button>
         </div>
         <div id="paintProcessesList"></div>
+    </div>
+
+    <!-- ISO FORMATS (not tied to a job — assigned directly to staff) -->
+    <div id="tab-iso" class="tab-content" style="display:none;">
+        <div class="pr-card">
+            <label class="pr-label">Add ISO Format</label>
+            <input type="text" id="newIsoFormatCode" class="pr-input" placeholder="Code (e.g. ISO-CAL-01)">
+            <input type="text" id="newIsoFormatName" class="pr-input" placeholder="Name (e.g. Calibration Log)">
+            <button class="pr-btn pr-btn-primary" onclick="addIsoFormat()">Add Format</button>
+        </div>
+        <div id="isoFormatsList"><p class="pr-empty">Loading...</p></div>
     </div>
 
     <!-- UNITS -->
@@ -144,6 +156,7 @@ function switchTab(tab) {
 
     if (tab === 'fab') loadFabSteps();
     if (tab === 'paint') { loadPaintItems(); }
+    if (tab === 'iso') loadIsoFormats();
     if (tab === 'units') loadUnits();
     if (tab === 'inspectors') loadInspectors();
     if (tab === 'workers') loadWorkersMaster();
@@ -969,7 +982,7 @@ async function deleteJob(jobId, jobNo) {
 async function loadInspectionFormats() {
     const container = document.getElementById('formatsList');
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
-    const { data, error } = await supabaseClient.from('pr_inspection_formats_master').select('*').eq('company_id', session.companyId).order('code');
+    const { data, error } = await supabaseClient.from('pr_inspection_formats_master').select('*').eq('company_id', session.companyId).eq('scope', 'process').order('code');
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
     let html = '<table class="pr-table"><tr><th>Code</th><th>Name</th><th>Template</th><th>Status</th><th></th></tr>';
@@ -1020,7 +1033,7 @@ async function addInspectionFormat() {
     const code = document.getElementById('newFormatCode').value.trim();
     const name = document.getElementById('newFormatName').value.trim();
     if (!code || !name) { alert('Enter format code and name'); return; }
-    const { error } = await supabaseClient.from('pr_inspection_formats_master').insert({ company_id: session.companyId, code: code, name: name });
+    const { error } = await supabaseClient.from('pr_inspection_formats_master').insert({ company_id: session.companyId, code: code, name: name, scope: 'process' });
     if (error) { alert('Error: ' + error.message); return; }
     document.getElementById('newFormatCode').value = '';
     document.getElementById('newFormatName').value = '';
@@ -1097,6 +1110,165 @@ async function deleteInspectionFormat(id, code) {
     const { error: retryError } = await supabaseClient.from('pr_inspection_formats_master').delete().eq('id', id);
     if (retryError) { alert('Error: ' + retryError.message); return; }
     loadInspectionFormats();
+}
+
+// ============ ISO FORMATS (not tied to a job — assigned directly to staff) ============
+// Mirrors the process-format CRUD above (same master table, scope='iso'),
+// plus an inspector-assignment checkbox list per format instead of the
+// step/process attachment concept, which doesn't apply here.
+async function loadIsoFormats() {
+    const container = document.getElementById('isoFormatsList');
+    container.innerHTML = '<p class="pr-empty">Loading...</p>';
+    const [{ data, error }, inspectors, { data: assignments }] = await Promise.all([
+        supabaseClient.from('pr_inspection_formats_master').select('*').eq('company_id', session.companyId).eq('scope', 'iso').order('code'),
+        fetchActiveInspectors(),
+        supabaseClient.from('pr_iso_format_assignments').select('format_id, inspector_id')
+    ]);
+    if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
+
+    let html = '<table class="pr-table"><tr><th>Code</th><th>Name</th><th>Template</th><th>Status</th><th></th></tr>';
+    (data || []).forEach(f => {
+        const jsCode = f.code.replace(/'/g, "\\'");
+        const assignedSet = new Set((assignments || []).filter(a => a.format_id === f.id).map(a => a.inspector_id));
+        html += '<tr><td>' + escapeHtml(f.code) + '</td><td>' + escapeHtml(f.name) + '</td>';
+        html += '<td>' + (f.template_file_path ? '<a href="#" onclick="viewIsoFormatTemplate(\'' + f.id + '\'); return false;" style="color:#1e3a5f; text-decoration:underline;">' + escapeHtml(f.template_file_name || 'view') + '</a>' : '<span style="color:#d9534f;">not uploaded</span>') + '</td>';
+        html += '<td><span class="pr-badge pr-badge-' + (f.is_active ? 'accept' : 'reject') + '">' + (f.is_active ? 'Active' : 'Inactive') + '</span></td>';
+        html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
+        html += '<a class="pr-btn pr-btn-primary" href="inspection-report.html?isoformat=' + f.id + '" style="text-decoration:none;">Open Sheet</a>';
+        html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_inspection_formats_master\',\'' + f.id + '\',' + f.is_active + ',loadIsoFormats)">' + (f.is_active ? 'Deactivate' : 'Activate') + '</button>';
+        html += '<button class="pr-btn pr-btn-outline" onclick="toggleIsoFormatEditRow(\'' + f.id + '\')">Edit</button>';
+        html += '<button class="pr-btn pr-btn-danger" onclick="deleteIsoFormat(\'' + f.id + '\',\'' + jsCode + '\')">Delete</button>';
+        html += '</td></tr>';
+
+        html += '<tr id="isoFormatEditRow_' + f.id + '" style="display:none;"><td colspan="5">';
+        html += '<div class="pr-card">';
+        html += '<label class="pr-label">Code</label><input type="text" class="pr-input" id="isoFormatCode_' + f.id + '" value="' + escapeHtml(f.code) + '">';
+        html += '<label class="pr-label">Name</label><input type="text" class="pr-input" id="isoFormatName_' + f.id + '" value="' + escapeHtml(f.name) + '">';
+        html += '<div style="display:flex; gap:8px; margin-top:8px;">';
+        html += '<button class="pr-btn pr-btn-primary" onclick="saveIsoFormatEdit(\'' + f.id + '\')">Save Changes</button>';
+        html += '<button class="pr-btn pr-btn-outline" onclick="toggleIsoFormatEditRow(\'' + f.id + '\')">Cancel</button>';
+        html += '</div>';
+        html += '<hr style="margin:14px 0; border:none; border-top:1px solid #ddd;">';
+        html += '<label class="pr-label">Assigned Staff (can view and fill this format)</label>';
+        html += '<div style="max-height:180px; overflow-y:auto; border:1px solid #ccc; border-radius:6px; padding:6px 10px; margin-bottom:10px;">';
+        if (inspectors.length === 0) { html += '<span style="font-size:12px; color:#999;">No active inspectors</span>'; }
+        inspectors.forEach(i => {
+            const checked = assignedSet.has(i.id);
+            html += '<label style="display:flex; align-items:center; gap:8px; padding:5px 0; font-size:13px; cursor:pointer;">';
+            html += '<input type="checkbox"' + (checked ? ' checked' : '') + ' onchange="toggleIsoFormatAssignment(\'' + f.id + '\',\'' + i.id + '\',this.checked)">';
+            html += escapeHtml(i.inspector_name);
+            html += '</label>';
+        });
+        html += '</div>';
+        html += '<hr style="margin:14px 0; border:none; border-top:1px solid #ddd;">';
+        html += '<label class="pr-label">Sheet Template</label>';
+        if (f.template_file_path) {
+            html += '<p style="font-size:14px; margin:4px 0;">' + escapeHtml(f.template_file_name || 'file') + '</p>';
+            html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">';
+            html += '<button class="pr-btn pr-btn-outline" onclick="viewIsoFormatTemplate(\'' + f.id + '\')">View / Verify</button>';
+            html += '<button class="pr-btn pr-btn-danger" onclick="deleteIsoFormatTemplate(\'' + f.id + '\')">Remove Template</button>';
+            html += '</div>';
+            html += '<label class="pr-label">Replace Template</label>';
+        }
+        html += '<input type="file" class="pr-input" id="isoFormatTemplateInput_' + f.id + '">';
+        html += '<button class="pr-btn pr-btn-primary" style="margin-top:8px;" onclick="uploadIsoFormatTemplate(\'' + f.id + '\')">' + (f.template_file_path ? 'Upload Replacement' : 'Upload Template') + '</button>';
+        html += '</div>';
+        html += '</td></tr>';
+    });
+    html += '</table>';
+    container.innerHTML = html;
+}
+
+function toggleIsoFormatEditRow(id) {
+    const row = document.getElementById('isoFormatEditRow_' + id);
+    row.style.display = (row.style.display === 'none') ? 'table-row' : 'none';
+}
+
+async function addIsoFormat() {
+    const code = document.getElementById('newIsoFormatCode').value.trim();
+    const name = document.getElementById('newIsoFormatName').value.trim();
+    if (!code || !name) { alert('Enter format code and name'); return; }
+    const { error } = await supabaseClient.from('pr_inspection_formats_master').insert({ company_id: session.companyId, code: code, name: name, scope: 'iso' });
+    if (error) { alert('Error: ' + error.message); return; }
+    document.getElementById('newIsoFormatCode').value = '';
+    document.getElementById('newIsoFormatName').value = '';
+    loadIsoFormats();
+}
+
+async function saveIsoFormatEdit(id) {
+    const newCode = document.getElementById('isoFormatCode_' + id).value.trim();
+    const newName = document.getElementById('isoFormatName_' + id).value.trim();
+    if (!newCode || !newName) { alert('Invalid code or name'); return; }
+    const { error } = await supabaseClient.from('pr_inspection_formats_master').update({ code: newCode, name: newName }).eq('id', id);
+    if (error) { alert('Error: ' + error.message); return; }
+    loadIsoFormats();
+}
+
+async function toggleIsoFormatAssignment(formatId, inspectorId, checked) {
+    if (checked) {
+        const { error } = await supabaseClient.from('pr_iso_format_assignments').insert({ format_id: formatId, inspector_id: inspectorId });
+        if (error) { alert('Error: ' + error.message); return; }
+    } else {
+        const { error } = await supabaseClient.from('pr_iso_format_assignments').delete().eq('format_id', formatId).eq('inspector_id', inspectorId);
+        if (error) { alert('Error: ' + error.message); return; }
+    }
+    loadIsoFormats();
+}
+
+async function uploadIsoFormatTemplate(formatId) {
+    const fileInput = document.getElementById('isoFormatTemplateInput_' + formatId);
+    const file = fileInput.files[0];
+    if (!file) { alert('Choose a file first'); return; }
+
+    const path = session.companyId + '/templates/' + formatId + '/' + file.name;
+    const { error: uploadError } = await supabaseClient.storage.from('inspection-sheets').upload(path, file, { upsert: true });
+    if (uploadError) { alert('Error uploading: ' + uploadError.message); return; }
+
+    const { error } = await supabaseClient.from('pr_inspection_formats_master').update({ template_file_path: path, template_file_name: file.name }).eq('id', formatId);
+    if (error) { alert('Error saving: ' + error.message); return; }
+    loadIsoFormats();
+}
+
+async function viewIsoFormatTemplate(formatId) {
+    const { data: fmt } = await supabaseClient.from('pr_inspection_formats_master').select('template_file_path').eq('id', formatId).maybeSingle();
+    if (!fmt || !fmt.template_file_path) { alert('No template uploaded'); return; }
+    const { data, error } = await supabaseClient.storage.from('inspection-sheets').createSignedUrl(fmt.template_file_path, 300);
+    if (error) { alert('Error: ' + error.message); return; }
+    window.open(data.signedUrl, '_blank');
+}
+
+async function deleteIsoFormatTemplate(formatId) {
+    if (!confirm('Remove the template for this ISO format? The already-shared report (if anyone has filled it in) keeps its own current content; this only affects re-copies.')) return;
+    const { data: fmt } = await supabaseClient.from('pr_inspection_formats_master').select('template_file_path').eq('id', formatId).maybeSingle();
+    if (fmt && fmt.template_file_path) {
+        await supabaseClient.storage.from('inspection-sheets').remove([fmt.template_file_path]);
+    }
+    const { error } = await supabaseClient.from('pr_inspection_formats_master').update({ template_file_path: null, template_file_name: null }).eq('id', formatId);
+    if (error) { alert('Error: ' + error.message); return; }
+    loadIsoFormats();
+}
+
+async function deleteIsoFormat(id, code) {
+    if (!confirm('Delete ISO format "' + code + '" permanently? This also deletes its shared report/sheet if one exists.')) return;
+    await supabaseClient.from('pr_iso_format_assignments').delete().eq('format_id', id);
+
+    const { data: reports } = await supabaseClient.from('pr_inspection_reports').select('id, file_path').eq('format_id', id).is('job_id', null);
+    const filePaths = (reports || []).filter(r => r.file_path).map(r => r.file_path);
+    if (filePaths.length > 0) {
+        await supabaseClient.storage.from('inspection-sheets').remove(filePaths);
+    }
+    if (reports && reports.length > 0) {
+        await supabaseClient.from('pr_inspection_reports').delete().eq('format_id', id).is('job_id', null);
+    }
+
+    const { data: fmt } = await supabaseClient.from('pr_inspection_formats_master').select('template_file_path').eq('id', id).maybeSingle();
+    if (fmt && fmt.template_file_path) {
+        await supabaseClient.storage.from('inspection-sheets').remove([fmt.template_file_path]);
+    }
+
+    const { error } = await supabaseClient.from('pr_inspection_formats_master').delete().eq('id', id);
+    if (error) { alert('Error: ' + error.message); return; }
+    loadIsoFormats();
 }
 
 // ============ SHARED HELPERS ============

@@ -30,6 +30,7 @@ const session = requireLogin();
 const urlParams = new URLSearchParams(window.location.search);
 const reportId = urlParams.get('report');
 const jobId = urlParams.get('job');
+const isoFormatId = urlParams.get('isoformat');
 
 let jobRecord = null;
 let report = null;
@@ -55,7 +56,12 @@ let validationDiagnostic = '';
 let lockHeld = false;
 
 async function goBack() {
-    const dest = (session.role === 'Partner') ? 'partner-home.html' : ('job-detail.html?job=' + jobId);
+    let dest;
+    if (session.role === 'Partner') {
+        dest = 'partner-home.html';
+    } else {
+        dest = isoFormatId ? 'admin.html' : ('job-detail.html?job=' + jobId);
+    }
     if (lockHeld && report) {
         try {
             await supabaseClient.from('pr_inspection_reports').update({ locked_by: null, locked_token: null, locked_at: null }).eq('id', report.id).eq('locked_token', getLockToken());
@@ -64,7 +70,19 @@ async function goBack() {
     window.location.href = dest;
 }
 
+function showLockedScreen() {
+    document.getElementById('reportCard').innerHTML =
+        '<div class="pr-card"><p style="font-weight:600; color:#b8860b; margin-top:0;">⚠️ Locked</p>' +
+        '<p>This sheet is currently being edited by <b>' + escapeHtml(report.locked_by || 'another user') + '</b>. Please wait until they finish, then try again.</p>' +
+        '<button class="pr-btn pr-btn-primary" style="margin-top:8px;" onclick="location.reload()">Check Again</button></div>';
+}
+
 async function init() {
+    if (isoFormatId) {
+        await initIsoMode();
+        return;
+    }
+
     if (!reportId || !jobId) {
         document.getElementById('reportCard').innerHTML = '<p class="pr-empty">No report specified.</p>';
         return;
@@ -85,13 +103,52 @@ async function init() {
     document.getElementById('subHeader').textContent = (jobRecord ? jobRecord.job_no : '');
 
     const gotLock = await tryClaimLock();
-    if (!gotLock) {
-        document.getElementById('reportCard').innerHTML =
-            '<div class="pr-card"><p style="font-weight:600; color:#b8860b; margin-top:0;">⚠️ Locked</p>' +
-            '<p>This sheet is currently being edited by <b>' + escapeHtml(report.locked_by || 'another user') + '</b>. Please wait until they finish, then try again.</p>' +
-            '<button class="pr-btn pr-btn-primary" style="margin-top:8px;" onclick="location.reload()">Check Again</button></div>';
+    if (!gotLock) { showLockedScreen(); return; }
+
+    await loadSheetIntoGrid();
+}
+
+// ISO formats have no job — one shared report per (company, format) with
+// job_id null, found-or-created here (same template-copy-on-create pattern
+// already used for job formats in job-detail.html/new-job.html), rather than
+// pre-created when the format is set up in Admin.
+async function initIsoMode() {
+    const { data: fmt } = await supabaseClient.from('pr_inspection_formats_master').select('id, code, name, template_file_path, template_file_name').eq('id', isoFormatId).maybeSingle();
+    if (!fmt) {
+        document.getElementById('reportCard').innerHTML = '<p class="pr-empty">Format not found.</p>';
         return;
     }
+    format = fmt;
+    document.getElementById('reportHeader').textContent = fmt.code + ' — ' + fmt.name;
+    document.getElementById('subHeader').textContent = 'ISO Format';
+
+    let reportRow;
+    const { data: existing } = await supabaseClient.from('pr_inspection_reports').select('*').eq('company_id', session.companyId).eq('format_id', isoFormatId).is('job_id', null).maybeSingle();
+    if (existing) {
+        reportRow = existing;
+    } else {
+        const { data: created, error } = await supabaseClient.from('pr_inspection_reports').insert({ company_id: session.companyId, job_id: null, format_id: isoFormatId }).select('*').single();
+        if (error || !created) {
+            document.getElementById('reportCard').innerHTML = '<p class="pr-empty">⚠️ Could not create report: ' + escapeHtml(error ? error.message : 'unknown') + '</p>';
+            return;
+        }
+        reportRow = created;
+        if (fmt.template_file_path) {
+            const destPath = session.companyId + '/' + reportRow.id + '/' + fmt.template_file_name;
+            const { error: copyError } = await supabaseClient.storage.from('inspection-sheets').copy(fmt.template_file_path, destPath);
+            if (!copyError) {
+                const { data: updated } = await supabaseClient.from('pr_inspection_reports').update({
+                    file_path: destPath, file_name: fmt.template_file_name,
+                    uploaded_by: 'Template (auto-attached)', uploaded_at: new Date().toISOString()
+                }).eq('id', reportRow.id).select('*').single();
+                if (updated) reportRow = updated;
+            }
+        }
+    }
+    report = reportRow;
+
+    const gotLock = await tryClaimLock();
+    if (!gotLock) { showLockedScreen(); return; }
 
     await loadSheetIntoGrid();
 }

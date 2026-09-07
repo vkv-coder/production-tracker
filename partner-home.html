@@ -17,8 +17,17 @@
 
 <div class="pr-container">
     <p style="font-size:13px; color:#666; margin-top:-8px;">Logged in as <strong id="workerName"></strong></p>
-    <div id="jobTabs" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;"></div>
-    <div id="stepsList"><p class="pr-empty">Loading...</p></div>
+    <div class="pr-tabs">
+        <div class="pr-tab active" data-maintab="process" onclick="switchMainTab('process')">Process</div>
+        <div class="pr-tab" data-maintab="iso" onclick="switchMainTab('iso')">ISO</div>
+    </div>
+    <div id="mainTab-process">
+        <div id="jobTabs" style="display:flex; gap:8px; flex-wrap:wrap; margin:12px 0;"></div>
+        <div id="stepsList"><p class="pr-empty">Loading...</p></div>
+    </div>
+    <div id="mainTab-iso" style="display:none; margin-top:12px;">
+        <div id="isoList"><p class="pr-empty">Loading...</p></div>
+    </div>
 </div>
 
 <script src="config.js"></script>
@@ -31,6 +40,40 @@ if (session && session.role !== 'Partner') {
 
 let jobGroups = {}; // jobId -> { job, items: [] }
 let currentJobId = null;
+
+function switchMainTab(tab) {
+    document.querySelectorAll('.pr-tab[data-maintab]').forEach(el => el.classList.remove('active'));
+    document.querySelector('.pr-tab[data-maintab="' + tab + '"]').classList.add('active');
+    document.getElementById('mainTab-process').style.display = (tab === 'process') ? 'block' : 'none';
+    document.getElementById('mainTab-iso').style.display = (tab === 'iso') ? 'block' : 'none';
+    if (tab === 'iso') loadIsoFormats();
+}
+
+async function loadIsoFormats() {
+    const container = document.getElementById('isoList');
+    container.innerHTML = '<p class="pr-empty">Loading...</p>';
+
+    const { data: assignments } = await supabaseClient
+        .from('pr_iso_format_assignments')
+        .select('pr_inspection_formats_master(id, code, name, is_active)')
+        .eq('inspector_id', session.userId);
+
+    const formats = (assignments || []).map(a => a.pr_inspection_formats_master).filter(f => f && f.is_active);
+    if (formats.length === 0) {
+        container.innerHTML = '<p class="pr-empty">No ISO formats assigned to you yet.</p>';
+        return;
+    }
+
+    let html = '';
+    formats.forEach(f => {
+        html += '<div class="pr-card">';
+        html += '<div class="pr-card-title">' + escapeHtml(f.code) + '</div>';
+        html += '<div class="pr-card-sub">' + escapeHtml(f.name) + '</div>';
+        html += '<a class="pr-btn pr-btn-primary" style="display:inline-block; margin-top:8px;" href="inspection-report.html?isoformat=' + f.id + '">Open &amp; Fill</a>';
+        html += '</div>';
+    });
+    container.innerHTML = html;
+}
 
 async function loadAssignedSteps() {
     document.getElementById('workerName').textContent = session.name;
