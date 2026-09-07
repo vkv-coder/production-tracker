@@ -64,8 +64,9 @@
 
     <!-- ISO FORMATS (not tied to a job — assigned directly to staff) -->
     <div id="tab-iso" class="tab-content" style="display:none;">
+        <p style="font-size:13px; color:#666; margin:0 0 10px;">The list below includes every format — from here you can assign any of them (including ones already used on a job step, like FM-01) directly to staff. Only add a new one below if you need a format that doesn't already exist.</p>
         <div class="pr-card">
-            <label class="pr-label">Add ISO Format</label>
+            <label class="pr-label">Add New Format</label>
             <input type="text" id="newIsoFormatCode" class="pr-input" placeholder="Code (e.g. ISO-CAL-01)">
             <input type="text" id="newIsoFormatName" class="pr-input" placeholder="Name (e.g. Calibration Log)">
             <button class="pr-btn pr-btn-primary" onclick="addIsoFormat()">Add Format</button>
@@ -1113,35 +1114,43 @@ async function deleteInspectionFormat(id, code) {
 }
 
 // ============ ISO FORMATS (not tied to a job — assigned directly to staff) ============
-// Mirrors the process-format CRUD above (same master table, scope='iso'),
-// plus an inspector-assignment checkbox list per format instead of the
-// step/process attachment concept, which doesn't apply here.
+// Any existing format — whether originally created here or in the Format
+// (process) tab — can be assigned directly to staff; scope only decides
+// which tab a *new* format's Add form defaults it into, not who's allowed to
+// be assigned. So this lists every company format, not just scope='iso' ones.
 async function loadIsoFormats() {
     const container = document.getElementById('isoFormatsList');
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
     const [{ data, error }, inspectors, { data: assignments }, { data: templatedFormats }] = await Promise.all([
-        supabaseClient.from('pr_inspection_formats_master').select('*').eq('company_id', session.companyId).eq('scope', 'iso').order('code'),
+        supabaseClient.from('pr_inspection_formats_master').select('*').eq('company_id', session.companyId).order('code'),
         fetchActiveInspectors(),
         supabaseClient.from('pr_iso_format_assignments').select('format_id, inspector_id'),
         supabaseClient.from('pr_inspection_formats_master').select('id, code, name, template_file_path, template_file_name').eq('company_id', session.companyId).not('template_file_path', 'is', null).order('code')
     ]);
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
-    let html = '<table class="pr-table"><tr><th>Code</th><th>Name</th><th>Template</th><th>Status</th><th></th></tr>';
+    let html = '<table class="pr-table"><tr><th>Code</th><th>Name</th><th>Type</th><th>Template</th><th>Status</th><th></th></tr>';
     (data || []).forEach(f => {
         const jsCode = f.code.replace(/'/g, "\\'");
         const assignedSet = new Set((assignments || []).filter(a => a.format_id === f.id).map(a => a.inspector_id));
         html += '<tr><td>' + escapeHtml(f.code) + '</td><td>' + escapeHtml(f.name) + '</td>';
+        html += '<td>' + (f.scope === 'process' ? 'Process' : 'ISO') + '</td>';
         html += '<td>' + (f.template_file_path ? '<a href="#" onclick="viewIsoFormatTemplate(\'' + f.id + '\'); return false;" style="color:#1e3a5f; text-decoration:underline;">' + escapeHtml(f.template_file_name || 'view') + '</a>' : '<span style="color:#d9534f;">not uploaded</span>') + '</td>';
         html += '<td><span class="pr-badge pr-badge-' + (f.is_active ? 'accept' : 'reject') + '">' + (f.is_active ? 'Active' : 'Inactive') + '</span></td>';
         html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
         html += '<a class="pr-btn pr-btn-primary" href="inspection-report.html?isoformat=' + f.id + '" style="text-decoration:none;">Open Sheet</a>';
         html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_inspection_formats_master\',\'' + f.id + '\',' + f.is_active + ',loadIsoFormats)">' + (f.is_active ? 'Deactivate' : 'Activate') + '</button>';
         html += '<button class="pr-btn pr-btn-outline" onclick="toggleIsoFormatEditRow(\'' + f.id + '\')">Edit</button>';
-        html += '<button class="pr-btn pr-btn-danger" onclick="deleteIsoFormat(\'' + f.id + '\',\'' + jsCode + '\')">Delete</button>';
+        // Delete only offered here for formats actually created as ISO - a
+        // process format shown in this list for assignment purposes should
+        // only ever be deleted from its own Format tab, so a step/process
+        // attachment elsewhere can't be broken from the wrong screen.
+        if (f.scope === 'iso') {
+            html += '<button class="pr-btn pr-btn-danger" onclick="deleteIsoFormat(\'' + f.id + '\',\'' + jsCode + '\')">Delete</button>';
+        }
         html += '</td></tr>';
 
-        html += '<tr id="isoFormatEditRow_' + f.id + '" style="display:none;"><td colspan="5">';
+        html += '<tr id="isoFormatEditRow_' + f.id + '" style="display:none;"><td colspan="6">';
         html += '<div class="pr-card">';
         html += '<label class="pr-label">Code</label><input type="text" class="pr-input" id="isoFormatCode_' + f.id + '" value="' + escapeHtml(f.code) + '">';
         html += '<label class="pr-label">Name</label><input type="text" class="pr-input" id="isoFormatName_' + f.id + '" value="' + escapeHtml(f.name) + '">';
