@@ -1119,10 +1119,11 @@ async function deleteInspectionFormat(id, code) {
 async function loadIsoFormats() {
     const container = document.getElementById('isoFormatsList');
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
-    const [{ data, error }, inspectors, { data: assignments }] = await Promise.all([
+    const [{ data, error }, inspectors, { data: assignments }, { data: templatedFormats }] = await Promise.all([
         supabaseClient.from('pr_inspection_formats_master').select('*').eq('company_id', session.companyId).eq('scope', 'iso').order('code'),
         fetchActiveInspectors(),
-        supabaseClient.from('pr_iso_format_assignments').select('format_id, inspector_id')
+        supabaseClient.from('pr_iso_format_assignments').select('format_id, inspector_id'),
+        supabaseClient.from('pr_inspection_formats_master').select('id, code, name, template_file_path, template_file_name').eq('company_id', session.companyId).not('template_file_path', 'is', null).order('code')
     ]);
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
@@ -1169,6 +1170,17 @@ async function loadIsoFormats() {
             html += '<button class="pr-btn pr-btn-danger" onclick="deleteIsoFormatTemplate(\'' + f.id + '\')">Remove Template</button>';
             html += '</div>';
             html += '<label class="pr-label">Replace Template</label>';
+        }
+        const otherTemplated = (templatedFormats || []).filter(t => t.id !== f.id);
+        if (otherTemplated.length > 0) {
+            html += '<label class="pr-label">Copy Template From Existing Format</label>';
+            html += '<select class="pr-select" onchange="if(this.value){copyTemplateFromFormat(\'' + f.id + '\',this.value); this.value=\'\';}">';
+            html += '<option value="">-- Select a format --</option>';
+            otherTemplated.forEach(t => {
+                html += '<option value="' + t.id + '">' + escapeHtml(t.code) + ' — ' + escapeHtml(t.name) + ' (' + escapeHtml(t.template_file_name || 'file') + ')</option>';
+            });
+            html += '</select>';
+            html += '<p style="font-size:12px; color:#666; margin:2px 0 10px;">Or upload a fresh file instead:</p>';
         }
         html += '<input type="file" class="pr-input" id="isoFormatTemplateInput_' + f.id + '">';
         html += '<button class="pr-btn pr-btn-primary" style="margin-top:8px;" onclick="uploadIsoFormatTemplate(\'' + f.id + '\')">' + (f.template_file_path ? 'Upload Replacement' : 'Upload Template') + '</button>';
@@ -1225,6 +1237,21 @@ async function uploadIsoFormatTemplate(formatId) {
     if (uploadError) { alert('Error uploading: ' + uploadError.message); return; }
 
     const { error } = await supabaseClient.from('pr_inspection_formats_master').update({ template_file_path: path, template_file_name: file.name }).eq('id', formatId);
+    if (error) { alert('Error saving: ' + error.message); return; }
+    loadIsoFormats();
+}
+
+// Reuse a template already uploaded to another format (Process or ISO) instead
+// of requiring the admin to have the file locally to re-upload it.
+async function copyTemplateFromFormat(targetFormatId, sourceFormatId) {
+    const { data: source } = await supabaseClient.from('pr_inspection_formats_master').select('template_file_path, template_file_name').eq('id', sourceFormatId).maybeSingle();
+    if (!source || !source.template_file_path) { alert('That format has no template to copy.'); return; }
+
+    const destPath = session.companyId + '/templates/' + targetFormatId + '/' + source.template_file_name;
+    const { error: copyError } = await supabaseClient.storage.from('inspection-sheets').copy(source.template_file_path, destPath);
+    if (copyError) { alert('Error copying template: ' + copyError.message); return; }
+
+    const { error } = await supabaseClient.from('pr_inspection_formats_master').update({ template_file_path: destPath, template_file_name: source.template_file_name }).eq('id', targetFormatId);
     if (error) { alert('Error saving: ' + error.message); return; }
     loadIsoFormats();
 }
