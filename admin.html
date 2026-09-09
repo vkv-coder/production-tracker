@@ -502,9 +502,22 @@ async function editPaintItem(id, currentName) {
 }
 
 async function deletePaintItem(id, name) {
-    if (!confirm('Delete paint item "' + name + '" permanently? If it already has processes or job tracking data, deletion will fail — use Deactivate instead in that case.')) return;
+    if (!confirm('Delete paint item "' + name + '" permanently?')) return;
     const { error } = await supabaseClient.from('pr_paint_items_master').delete().eq('id', id);
-    if (error) { alert('Error deleting: ' + error.message + '\n\nThis item likely still has processes or tracking data linked. Use Deactivate instead.'); return; }
+    if (!error) { loadPaintItems(); return; }
+
+    const { count } = await supabaseClient.from('pr_paint_tracking').select('id', { count: 'exact', head: true }).eq('paint_item_id', id);
+    const forceMsg = 'This item is used in ' + (count || 'some') + ' job(s)\' tracking data and/or has processes defined, so it can\'t be deleted directly.\n\nForce delete will PERMANENTLY remove this item, its processes, and ALL job tracking data (dates, remarks, inspection status, worker/inspector assignments, any inspection sheets) that used it. This cannot be undone.\n\nForce delete anyway?';
+    if (!confirm(forceMsg)) return;
+
+    const { error: trackingError } = await supabaseClient.from('pr_paint_tracking').delete().eq('paint_item_id', id);
+    if (trackingError) { alert('Error force-deleting tracking data: ' + trackingError.message); return; }
+
+    const { error: processError } = await supabaseClient.from('pr_paint_process_master').delete().eq('paint_item_id', id);
+    if (processError) { alert('Error force-deleting processes: ' + processError.message); return; }
+
+    const { error: retryError } = await supabaseClient.from('pr_paint_items_master').delete().eq('id', id);
+    if (retryError) { alert('Error: ' + retryError.message); return; }
     loadPaintItems();
 }
 
