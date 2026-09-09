@@ -1506,16 +1506,16 @@ async function loadInspectionFormats() {
     const { data, error } = await supabaseClient.from('pr_inspection_formats_master').select('*').eq('company_id', session.companyId).eq('scope', 'process').order('code');
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
-    let html = '<table class="pr-table"><tr><th>Code</th><th>Name</th><th>Template</th><th>Status</th><th></th></tr>';
+    let html = '<table class="pr-table" style="table-layout:fixed;"><colgroup><col style="width:10%;"><col style="width:20%;"><col style="width:22%;"><col style="width:10%;"><col style="width:38%;"></colgroup><tr><th>Code</th><th>Name</th><th>Template</th><th>Status</th><th></th></tr>';
     (data || []).forEach(f => {
         const jsCode = f.code.replace(/'/g, "\\'");
         html += '<tr><td>' + escapeHtml(f.code) + '</td><td>' + escapeHtml(f.name) + '</td>';
         html += '<td>' + (f.template_file_path ? '<a href="#" onclick="viewFormatTemplate(\'' + f.id + '\'); return false;" style="color:#1e3a5f; text-decoration:underline;">' + escapeHtml(f.template_file_name || 'view') + '</a>' : '<span style="color:#d9534f;">not uploaded</span>') + '</td>';
         html += '<td><span class="pr-badge pr-badge-' + (f.is_active ? 'accept' : 'reject') + '">' + (f.is_active ? 'Active' : 'Inactive') + '</span></td>';
-        html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
-        html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_inspection_formats_master\',\'' + f.id + '\',' + f.is_active + ',loadInspectionFormats)">' + (f.is_active ? 'Deactivate' : 'Activate') + '</button>';
-        html += '<button class="pr-btn pr-btn-outline" onclick="toggleFormatEditRow(\'' + f.id + '\')">Edit</button>';
-        html += '<button class="pr-btn pr-btn-danger" onclick="deleteInspectionFormat(\'' + f.id + '\',\'' + jsCode + '\')">Delete</button>';
+        html += '<td style="display:flex; gap:4px; flex-wrap:nowrap;">';
+        html += '<button class="pr-btn pr-btn-outline" style="padding:6px 8px; font-size:12px;" onclick="toggleActive(\'pr_inspection_formats_master\',\'' + f.id + '\',' + f.is_active + ',loadInspectionFormats)">' + (f.is_active ? 'Deactivate' : 'Activate') + '</button>';
+        html += '<button class="pr-btn pr-btn-outline" style="padding:6px 8px; font-size:12px;" onclick="toggleFormatEditRow(\'' + f.id + '\')">Edit</button>';
+        html += '<button class="pr-btn pr-btn-danger" style="padding:6px 8px; font-size:12px;" onclick="deleteInspectionFormat(\'' + f.id + '\',\'' + jsCode + '\')">Delete</button>';
         html += '</td></tr>';
 
         html += '<tr id="formatEditRow_' + f.id + '" style="display:none;"><td colspan="5">';
