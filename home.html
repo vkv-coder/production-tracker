@@ -576,13 +576,13 @@ async function loadSummary() {
         html += '<div class="pr-progress-bg"><div class="pr-progress-fill" style="width:' + fabPct + '%;"></div></div>';
         html += paintHtml;
 
-        html += '<div onclick="event.stopPropagation()" style="display:flex; gap:14px; overflow-x:auto; font-size:11px; margin-top:10px; border-top:1px solid #eee; padding-top:8px; white-space:nowrap;">';
-        html += '<div><b style="display:block; color:#666; font-size:10px;">Plan 1st Start</b>' + (plannedFirstStart || '-') + '</div>';
-        html += '<div><b style="display:block; color:#666; font-size:10px;">Actual 1st Start</b>' + (actualFirstStart || '-') + '</div>';
-        html += '<div><b style="display:block; color:#666; font-size:10px;">Plan Last End</b>' + (plannedLastEnd || '-') + '</div>';
-        html += '<div><b style="display:block; color:#666; font-size:10px;">Actual Last End</b>' + (actualLastEnd || '-') + '</div>';
-        html += '<div><b style="display:block; color:#666; font-size:10px;">Plan Total Days</b>' + (plannedTotalDays != null ? plannedTotalDays : '-') + '</div>';
-        html += '<div><b style="display:block; color:#666; font-size:10px;">Actual Total Days</b>' + (actualTotalDays != null ? actualTotalDays : '-') + '</div>';
+        html += '<div onclick="event.stopPropagation()" style="cursor:default; display:flex; gap:14px; overflow-x:auto; font-size:11px; margin-top:10px; border-top:1px solid #eee; padding-top:8px; white-space:nowrap;">';
+        html += '<div onclick="event.stopPropagation()" style="cursor:default;"><b style="display:block; color:#666; font-size:10px;">Plan 1st Start</b>' + (plannedFirstStart || '-') + '</div>';
+        html += '<div onclick="event.stopPropagation()" style="cursor:default;"><b style="display:block; color:#666; font-size:10px;">Actual 1st Start</b>' + (actualFirstStart || '-') + '</div>';
+        html += '<div onclick="event.stopPropagation()" style="cursor:default;"><b style="display:block; color:#666; font-size:10px;">Plan Last End</b>' + (plannedLastEnd || '-') + '</div>';
+        html += '<div onclick="event.stopPropagation()" style="cursor:default;"><b style="display:block; color:#666; font-size:10px;">Actual Last End</b>' + (actualLastEnd || '-') + '</div>';
+        html += '<div onclick="event.stopPropagation()" style="cursor:default;"><b style="display:block; color:#666; font-size:10px;">Plan Total Days</b>' + (plannedTotalDays != null ? plannedTotalDays : '-') + '</div>';
+        html += '<div onclick="event.stopPropagation()" style="cursor:default;"><b style="display:block; color:#666; font-size:10px;">Actual Total Days</b>' + (actualTotalDays != null ? actualTotalDays : '-') + '</div>';
         html += '</div>';
 
         html += '</div>';
