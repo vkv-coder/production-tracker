@@ -269,6 +269,7 @@ async function loadToday() {
     const container = document.getElementById('todayList');
     container.innerHTML = '<p class="pr-empty">Loading...</p>';
     const today = todayStr(0);
+    loadTodayPainting();
 
     const { data: fabRows } = await supabaseClient
         .from('pr_fab_tracking')
@@ -322,7 +323,6 @@ async function loadToday() {
         html += '</div></div>';
     });
     container.innerHTML = html;
-    loadTodayPainting();
 }
 
 async function endInspection(trackingId) {
