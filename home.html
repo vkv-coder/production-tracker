@@ -1874,7 +1874,7 @@ async function fetchJobTrackerRows() {
 
     const [{ data: fabRows }, { data: paintRows }] = await Promise.all([
         jobIds.length ? supabaseClient.from('pr_fab_tracking').select('job_id, planned_start, planned_end, actual_start, actual_end, start_delay_reason, end_delay_reason, pr_fab_steps_master(step_name, step_order)').in('job_id', jobIds) : Promise.resolve({ data: [] }),
-        jobIds.length ? supabaseClient.from('pr_paint_tracking').select('job_id, start_date, stop_date, remarks, pr_paint_process_master(process_name), pr_paint_items_master(item_name)').in('job_id', jobIds) : Promise.resolve({ data: [] })
+        jobIds.length ? supabaseClient.from('pr_paint_tracking').select('job_id, start_date, stop_date, remarks, pr_paint_process_master(process_name, process_order), pr_paint_items_master(item_name)').in('job_id', jobIds) : Promise.resolve({ data: [] })
     ]);
 
     const rows = [];
@@ -1885,6 +1885,7 @@ async function fetchJobTrackerRows() {
         rows.push({
             jobNo: job ? job.job_no : '', customer: job ? (job.customer_name || '') : '', jobStatus: job ? (job.status || '') : '',
             type: 'Fab', item: '', step: r.pr_fab_steps_master ? r.pr_fab_steps_master.step_name : '',
+            stepOrder: r.pr_fab_steps_master && r.pr_fab_steps_master.step_order != null ? r.pr_fab_steps_master.step_order : 0,
             plannedStart: r.planned_start || '', plannedEnd: r.planned_end || '',
             actualStart: r.actual_start || '', actualEnd: r.actual_end || '',
             reason: reason, status: status.text, color: status.color
@@ -1898,13 +1899,27 @@ async function fetchJobTrackerRows() {
         rows.push({
             jobNo: job ? job.job_no : '', customer: job ? (job.customer_name || '') : '', jobStatus: job ? (job.status || '') : '',
             type: 'Paint', item: r.pr_paint_items_master ? r.pr_paint_items_master.item_name : '', step: r.pr_paint_process_master ? r.pr_paint_process_master.process_name : '',
+            processOrder: r.pr_paint_process_master && r.pr_paint_process_master.process_order != null ? r.pr_paint_process_master.process_order : 0,
             plannedStart: '', plannedEnd: '',
             actualStart: r.start_date || '', actualEnd: r.stop_date || '',
             reason: r.remarks || '', status: 'N/A', color: null
         });
     });
 
-    rows.sort((a, b) => (a.jobNo || '').localeCompare(b.jobNo || ''));
+    // Within a job: Fab steps first (in Fab Steps Master sequence), then
+    // Paint items alphabetically with each item's processes in Paint
+    // Process Master sequence — matches how the masters are ordered,
+    // instead of whatever arbitrary order the DB returned rows in.
+    rows.sort((a, b) => {
+        const jobCmp = (a.jobNo || '').localeCompare(b.jobNo || '');
+        if (jobCmp !== 0) return jobCmp;
+        const typeCmp = (a.type === 'Fab' ? 0 : 1) - (b.type === 'Fab' ? 0 : 1);
+        if (typeCmp !== 0) return typeCmp;
+        if (a.type === 'Fab') return a.stepOrder - b.stepOrder;
+        const itemCmp = (a.item || '').localeCompare(b.item || '');
+        if (itemCmp !== 0) return itemCmp;
+        return a.processOrder - b.processOrder;
+    });
     return rows;
 }
 
