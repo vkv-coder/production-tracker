@@ -60,7 +60,7 @@ async function goBack() {
     if (session.role === 'Partner') {
         dest = 'partner-home.html';
     } else {
-        dest = isoFormatId ? 'admin.html' : ('job-detail.html?job=' + jobId);
+        dest = isoFormatId ? 'home.html' : ('job-detail.html?job=' + jobId);
     }
     if (lockHeld && report) {
         try {

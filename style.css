@@ -45,7 +45,7 @@ body {
 /* Tabs */
 .pr-tabs {
     display: flex;
-    overflow-x: auto;
+    flex-wrap: wrap;
     background: #fff;
     border-bottom: 1px solid #ddd;
     position: sticky;

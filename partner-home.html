@@ -85,11 +85,11 @@ async function loadAssignedSteps() {
     const [{ data: fabAssignments }, { data: paintAssignments }, { data: supervisorJobs }] = await Promise.all([
         supabaseClient
             .from('pr_fab_tracking_inspectors')
-            .select('pr_fab_tracking(id, job_id, pr_jobs(job_no, customer_name, status), pr_fab_steps_master(step_name, step_order))')
+            .select('pr_fab_tracking(id, job_id, planned_start, planned_end, actual_start, actual_end, start_delay_reason, end_delay_reason, pr_jobs(job_no, customer_name, status), pr_fab_steps_master(step_name, step_order))')
             .eq('inspector_id', session.userId),
         supabaseClient
             .from('pr_paint_tracking_inspectors')
-            .select('pr_paint_tracking(id, job_id, pr_jobs(job_no, customer_name, status), pr_paint_process_master(process_name, process_order))')
+            .select('pr_paint_tracking(id, job_id, start_date, stop_date, remarks, pr_jobs(job_no, customer_name, status), pr_paint_process_master(process_name, process_order))')
             .eq('inspector_id', session.userId),
         supabaseClient
             .from('pr_jobs')
@@ -97,31 +97,37 @@ async function loadAssignedSteps() {
             .eq('supervisor_inspector_id', session.userId)
     ]);
 
+    // Supervisor: pull in EVERY process of their supervised jobs, not just
+    // steps they're personally assigned to - computed first so items built
+    // below (both directly-assigned and supervisor-added) can be tagged with
+    // whether the viewer is allowed to edit Actual Start/End + delay reason
+    // on them (only true for a job they're supervisor on).
+    const supervisorJobMap = {};
+    (supervisorJobs || []).forEach(j => { supervisorJobMap[j.id] = j; });
+    const supervisorJobIds = new Set(Object.keys(supervisorJobMap));
+
     const items = [];
     const seenFab = new Set(), seenPaint = new Set();
     (fabAssignments || []).forEach(a => {
         const t = a.pr_fab_tracking;
-        if (t) { items.push({ type: 'fab', trackingId: t.id, jobId: t.job_id, job: t.pr_jobs, stepName: t.pr_fab_steps_master?.step_name, order: t.pr_fab_steps_master?.step_order }); seenFab.add(t.id); }
+        if (t) { items.push({ type: 'fab', trackingId: t.id, jobId: t.job_id, job: t.pr_jobs, stepName: t.pr_fab_steps_master?.step_name, order: t.pr_fab_steps_master?.step_order, isSupervisor: supervisorJobIds.has(t.job_id), plannedStart: t.planned_start, plannedEnd: t.planned_end, actualStart: t.actual_start, actualEnd: t.actual_end, startDelayReason: t.start_delay_reason, endDelayReason: t.end_delay_reason }); seenFab.add(t.id); }
     });
     (paintAssignments || []).forEach(a => {
         const t = a.pr_paint_tracking;
-        if (t) { items.push({ type: 'paint', trackingId: t.id, jobId: t.job_id, job: t.pr_jobs, stepName: t.pr_paint_process_master?.process_name, order: t.pr_paint_process_master?.process_order }); seenPaint.add(t.id); }
+        if (t) { items.push({ type: 'paint', trackingId: t.id, jobId: t.job_id, job: t.pr_jobs, stepName: t.pr_paint_process_master?.process_name, order: t.pr_paint_process_master?.process_order, isSupervisor: supervisorJobIds.has(t.job_id), startDate: t.start_date, stopDate: t.stop_date, remarks: t.remarks }); seenPaint.add(t.id); }
     });
 
-    // Supervisor: pull in EVERY process of their supervised jobs, not just steps they're personally assigned to.
-    const supervisorJobMap = {};
-    (supervisorJobs || []).forEach(j => { supervisorJobMap[j.id] = j; });
-    const supervisorJobIds = Object.keys(supervisorJobMap);
-    if (supervisorJobIds.length > 0) {
+    if (supervisorJobIds.size > 0) {
+        const supervisorJobIdList = Array.from(supervisorJobIds);
         const [{ data: allFab }, { data: allPaint }] = await Promise.all([
-            supabaseClient.from('pr_fab_tracking').select('id, job_id, pr_fab_steps_master(step_name, step_order)').in('job_id', supervisorJobIds),
-            supabaseClient.from('pr_paint_tracking').select('id, job_id, pr_paint_process_master(process_name, process_order)').in('job_id', supervisorJobIds)
+            supabaseClient.from('pr_fab_tracking').select('id, job_id, planned_start, planned_end, actual_start, actual_end, start_delay_reason, end_delay_reason, pr_fab_steps_master(step_name, step_order)').in('job_id', supervisorJobIdList),
+            supabaseClient.from('pr_paint_tracking').select('id, job_id, start_date, stop_date, remarks, pr_paint_process_master(process_name, process_order)').in('job_id', supervisorJobIdList)
         ]);
         (allFab || []).forEach(t => {
-            if (!seenFab.has(t.id)) items.push({ type: 'fab', trackingId: t.id, jobId: t.job_id, job: supervisorJobMap[t.job_id], stepName: t.pr_fab_steps_master?.step_name, order: t.pr_fab_steps_master?.step_order });
+            if (!seenFab.has(t.id)) items.push({ type: 'fab', trackingId: t.id, jobId: t.job_id, job: supervisorJobMap[t.job_id], stepName: t.pr_fab_steps_master?.step_name, order: t.pr_fab_steps_master?.step_order, isSupervisor: true, plannedStart: t.planned_start, plannedEnd: t.planned_end, actualStart: t.actual_start, actualEnd: t.actual_end, startDelayReason: t.start_delay_reason, endDelayReason: t.end_delay_reason });
         });
         (allPaint || []).forEach(t => {
-            if (!seenPaint.has(t.id)) items.push({ type: 'paint', trackingId: t.id, jobId: t.job_id, job: supervisorJobMap[t.job_id], stepName: t.pr_paint_process_master?.process_name, order: t.pr_paint_process_master?.process_order });
+            if (!seenPaint.has(t.id)) items.push({ type: 'paint', trackingId: t.id, jobId: t.job_id, job: supervisorJobMap[t.job_id], stepName: t.pr_paint_process_master?.process_name, order: t.pr_paint_process_master?.process_order, isSupervisor: true, startDate: t.start_date, stopDate: t.stop_date, remarks: t.remarks });
         });
     }
 
@@ -222,6 +228,34 @@ function renderSelectedJob() {
         html += '<div class="pr-card-title">' + (item.job ? escapeHtml(item.job.job_no) : 'Job') + (item.job && item.job.customer_name ? ' - ' + escapeHtml(item.job.customer_name) : '') + '</div>';
         html += '<div class="pr-card-sub">' + (item.job ? escapeHtml(item.job.status || '') + ' &middot; ' : '') + (item.order != null ? item.order + '. ' : '') + escapeHtml(item.stepName || '') + '</div>';
 
+        // Overall Incharge only: Actual Start/End + delay reason (fab) or
+        // Start/Stop/Remarks (paint, which has no separate planned/delay-
+        // reason concept) - permitted by the supervisor-only UPDATE policy.
+        // A plain assigned-only inspector never sees these fields at all.
+        if (item.isSupervisor && item.type === 'fab') {
+            const startDelayed = !!(item.actualStart && item.plannedStart && item.actualStart > item.plannedStart);
+            const endDelayed = !!(item.actualEnd && item.plannedEnd && item.actualEnd > item.plannedEnd);
+            html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">';
+            html += '<div><label class="pr-label">Actual Start</label><input type="date" class="pr-input" style="' + (startDelayed ? 'border:2px solid #dc3545;' : '') + '" value="' + (item.actualStart || '') + '" onchange="updateFabField(\'' + item.trackingId + '\',\'actual_start\',this.value)"></div>';
+            html += '<div><label class="pr-label">Actual End</label><input type="date" class="pr-input" style="' + (endDelayed ? 'border:2px solid #dc3545;' : '') + '" value="' + (item.actualEnd || '') + '" onchange="updateFabField(\'' + item.trackingId + '\',\'actual_end\',this.value)"></div>';
+            html += '</div>';
+            if (startDelayed) {
+                html += '<label class="pr-label" style="margin-top:6px; color:#dc3545;">Start Late Reason</label>';
+                html += '<input type="text" class="pr-input" style="border:2px solid #dc3545;" value="' + (item.startDelayReason || '').replace(/"/g, '&quot;') + '" onchange="updateFabField(\'' + item.trackingId + '\',\'start_delay_reason\',this.value)">';
+            }
+            if (endDelayed) {
+                html += '<label class="pr-label" style="margin-top:6px; color:#dc3545;">End Late Reason</label>';
+                html += '<input type="text" class="pr-input" style="border:2px solid #dc3545;" value="' + (item.endDelayReason || '').replace(/"/g, '&quot;') + '" onchange="updateFabField(\'' + item.trackingId + '\',\'end_delay_reason\',this.value)">';
+            }
+        } else if (item.isSupervisor && item.type === 'paint') {
+            html += '<div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px;">';
+            html += '<div><label class="pr-label">Start Date</label><input type="date" class="pr-input" value="' + (item.startDate || '') + '" onchange="updatePaintField(\'' + item.trackingId + '\',\'start_date\',this.value)"></div>';
+            html += '<div><label class="pr-label">Stop Date</label><input type="date" class="pr-input" value="' + (item.stopDate || '') + '" onchange="updatePaintField(\'' + item.trackingId + '\',\'stop_date\',this.value)"></div>';
+            html += '</div>';
+            html += '<label class="pr-label" style="margin-top:6px;">Remarks</label>';
+            html += '<input type="text" class="pr-input" value="' + (item.remarks || '').replace(/"/g, '&quot;') + '" onchange="updatePaintField(\'' + item.trackingId + '\',\'remarks\',this.value)">';
+        }
+
         html += '<div style="display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 4px;">';
         if (item.links.length === 0) {
             html += '<span style="font-size:12px; color:#999;">No inspection sheet on this step.</span>';
@@ -242,6 +276,22 @@ function renderSelectedJob() {
         html += '</div>';
     });
     container.innerHTML = html;
+}
+
+async function updateFabField(trackingId, field, value) {
+    const updateObj = {};
+    updateObj[field] = value === '' ? null : value;
+    const { error } = await supabaseClient.from('pr_fab_tracking').update(updateObj).eq('id', trackingId);
+    if (error) { alert('Error: ' + error.message); return; }
+    loadAssignedSteps();
+}
+
+async function updatePaintField(trackingId, field, value) {
+    const updateObj = {};
+    updateObj[field] = value === '' ? null : value;
+    const { error } = await supabaseClient.from('pr_paint_tracking').update(updateObj).eq('id', trackingId);
+    if (error) { alert('Error: ' + error.message); return; }
+    loadAssignedSteps();
 }
 
 async function viewProcessImage(path) {
