@@ -1649,7 +1649,7 @@ async function loadIsoFormats() {
     ]);
     if (error) { container.innerHTML = '<p class="pr-empty">⚠️ Could not load: ' + error.message + '</p>'; return; }
 
-    let html = '<table class="pr-table"><tr><th>Code</th><th>Name</th><th>Type</th><th>Assigned To</th><th>Template</th><th>Status</th><th></th></tr>';
+    let html = '<table class="pr-table" style="table-layout:fixed;"><colgroup><col style="width:7%;"><col style="width:13%;"><col style="width:7%;"><col style="width:15%;"><col style="width:13%;"><col style="width:7%;"><col style="width:38%;"></colgroup><tr><th>Code</th><th>Name</th><th>Type</th><th>Assigned To</th><th>Template</th><th>Status</th><th></th></tr>';
     (data || []).forEach(f => {
         const jsCode = f.code.replace(/'/g, "\\'");
         const assignedInsp = inspectors.filter(i => (assignments || []).some(a => a.format_id === f.id && a.inspector_id === i.id));
@@ -1660,16 +1660,16 @@ async function loadIsoFormats() {
         html += '<td>' + (assignedInsp.length > 0 ? escapeHtml(assignedInsp.map(i => i.inspector_name).join(', ')) : '<span style="color:#999;">None</span>') + '</td>';
         html += '<td>' + (f.template_file_path ? '<a href="#" onclick="viewIsoFormatTemplate(\'' + f.id + '\'); return false;" style="color:#1e3a5f; text-decoration:underline;">' + escapeHtml(f.template_file_name || 'view') + '</a>' : '<span style="color:#d9534f;">not uploaded</span>') + '</td>';
         html += '<td><span class="pr-badge pr-badge-' + (f.is_active ? 'accept' : 'reject') + '">' + (f.is_active ? 'Active' : 'Inactive') + '</span></td>';
-        html += '<td style="display:flex; gap:6px; flex-wrap:wrap;">';
-        html += '<a class="pr-btn pr-btn-primary" href="inspection-report.html?isoformat=' + f.id + '" style="text-decoration:none;">Open Sheet</a>';
-        html += '<button class="pr-btn pr-btn-outline" onclick="toggleActive(\'pr_inspection_formats_master\',\'' + f.id + '\',' + f.is_active + ',loadIsoFormats)">' + (f.is_active ? 'Deactivate' : 'Activate') + '</button>';
-        html += '<button class="pr-btn pr-btn-outline" onclick="toggleIsoFormatEditRow(\'' + f.id + '\')">' + (isProcess ? 'Assign' : 'Edit') + '</button>';
+        html += '<td style="display:flex; gap:4px; flex-wrap:wrap;">';
+        html += '<a class="pr-btn pr-btn-primary" style="padding:6px 8px; font-size:12px; text-decoration:none;" href="inspection-report.html?isoformat=' + f.id + '">Open Sheet</a>';
+        html += '<button class="pr-btn pr-btn-outline" style="padding:6px 8px; font-size:12px;" onclick="toggleActive(\'pr_inspection_formats_master\',\'' + f.id + '\',' + f.is_active + ',loadIsoFormats)">' + (f.is_active ? 'Deactivate' : 'Activate') + '</button>';
+        html += '<button class="pr-btn pr-btn-outline" style="padding:6px 8px; font-size:12px;" onclick="toggleIsoFormatEditRow(\'' + f.id + '\')">' + (isProcess ? 'Assign' : 'Edit') + '</button>';
         // Delete only offered here for formats actually created as ISO - a
         // process format shown in this list for assignment purposes should
         // only ever be deleted from its own Format tab, so a step/process
         // attachment elsewhere can't be broken from the wrong screen.
         if (!isProcess) {
-            html += '<button class="pr-btn pr-btn-danger" onclick="deleteIsoFormat(\'' + f.id + '\',\'' + jsCode + '\')">Delete</button>';
+            html += '<button class="pr-btn pr-btn-danger" style="padding:6px 8px; font-size:12px;" onclick="deleteIsoFormat(\'' + f.id + '\',\'' + jsCode + '\')">Delete</button>';
         }
         html += '</td></tr>';
 
