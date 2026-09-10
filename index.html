@@ -28,7 +28,7 @@
             <a href="#" onclick="showForgotBox(); return false;" style="font-size:13px; color:#1e3a5f; text-decoration:underline;">Forgot Password?</a>
         </p>
         <p style="text-align:center; margin-top:8px;">
-            <a href="partner-login.html" style="font-size:13px; color:#666; text-decoration:underline;">Partner Login</a>
+            <a href="partner-login.html" style="font-size:14px; color:#1e3a5f; font-weight:600; text-decoration:underline;">Inspector / Supervisor Login</a>
         </p>
     </div>
 
@@ -82,7 +82,7 @@ async function doLogin() {
     });
 
     if (authError || !authData.user) {
-        errorMsg.textContent = 'Login failed: incorrect email or password';
+        errorMsg.innerHTML = 'Login failed: incorrect email or password.<br>Inspectors/Supervisors: use <a href="partner-login.html" style="color:#d9534f; text-decoration:underline;">Partner Login</a> instead — no password needed.';
         errorMsg.style.display = 'block';
         return;
     }
