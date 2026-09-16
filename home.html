@@ -854,6 +854,41 @@ async function toggleFabStepFormat(fabStepId, formatId, checked) {
     loadFabSteps();
 }
 
+// Default-inspector assignments only auto-apply to jobs created AFTER the
+// assignment is made (new-job.html copies them onto fresh tracking rows at
+// creation time) - these two helpers retroactively sync the same add/remove
+// onto already-open tracking rows (actual_end/stop_date still null) so an
+// inspector added later isn't invisible on in-progress jobs. "Open" is
+// judged per-row, not per-job, so completed steps on an otherwise-running
+// job are left alone.
+async function syncFabStepInspectorToOpenJobs(fabStepId, inspectorId, add) {
+    const { data: openRows } = await supabaseClient.from('pr_fab_tracking').select('id').eq('fab_step_id', fabStepId).is('actual_end', null);
+    const trackingIds = (openRows || []).map(r => r.id);
+    if (trackingIds.length === 0) return;
+    if (add) {
+        const { data: existing } = await supabaseClient.from('pr_fab_tracking_inspectors').select('fab_tracking_id').eq('inspector_id', inspectorId).in('fab_tracking_id', trackingIds);
+        const already = new Set((existing || []).map(r => r.fab_tracking_id));
+        const toInsert = trackingIds.filter(id => !already.has(id)).map(id => ({ fab_tracking_id: id, inspector_id: inspectorId }));
+        if (toInsert.length > 0) await supabaseClient.from('pr_fab_tracking_inspectors').insert(toInsert);
+    } else {
+        await supabaseClient.from('pr_fab_tracking_inspectors').delete().eq('inspector_id', inspectorId).in('fab_tracking_id', trackingIds);
+    }
+}
+
+async function syncPaintProcessInspectorToOpenJobs(processId, inspectorId, add) {
+    const { data: openRows } = await supabaseClient.from('pr_paint_tracking').select('id').eq('process_id', processId).is('stop_date', null);
+    const trackingIds = (openRows || []).map(r => r.id);
+    if (trackingIds.length === 0) return;
+    if (add) {
+        const { data: existing } = await supabaseClient.from('pr_paint_tracking_inspectors').select('paint_tracking_id').eq('inspector_id', inspectorId).in('paint_tracking_id', trackingIds);
+        const already = new Set((existing || []).map(r => r.paint_tracking_id));
+        const toInsert = trackingIds.filter(id => !already.has(id)).map(id => ({ paint_tracking_id: id, inspector_id: inspectorId }));
+        if (toInsert.length > 0) await supabaseClient.from('pr_paint_tracking_inspectors').insert(toInsert);
+    } else {
+        await supabaseClient.from('pr_paint_tracking_inspectors').delete().eq('inspector_id', inspectorId).in('paint_tracking_id', trackingIds);
+    }
+}
+
 async function toggleFabStepDefaultInspector(fabStepId, inspectorId, checked) {
     if (checked) {
         const { error } = await supabaseClient.from('pr_fab_step_default_inspectors').insert({ fab_step_id: fabStepId, inspector_id: inspectorId });
@@ -862,6 +897,7 @@ async function toggleFabStepDefaultInspector(fabStepId, inspectorId, checked) {
         const { error } = await supabaseClient.from('pr_fab_step_default_inspectors').delete().eq('fab_step_id', fabStepId).eq('inspector_id', inspectorId);
         if (error) { alert('Error: ' + error.message); return; }
     }
+    await syncFabStepInspectorToOpenJobs(fabStepId, inspectorId, checked);
     loadFabSteps();
 }
 
@@ -1154,6 +1190,7 @@ async function toggleProcessDefaultInspector(processId, inspectorId, checked) {
         const { error } = await supabaseClient.from('pr_paint_process_default_inspectors').delete().eq('process_id', processId).eq('inspector_id', inspectorId);
         if (error) { alert('Error: ' + error.message); return; }
     }
+    await syncPaintProcessInspectorToOpenJobs(processId, inspectorId, checked);
     const siblings = await getSiblingPaintProcessIds(processId);
     for (const p of siblings) {
         if (checked) {
@@ -1161,6 +1198,7 @@ async function toggleProcessDefaultInspector(processId, inspectorId, checked) {
         } else {
             await supabaseClient.from('pr_paint_process_default_inspectors').delete().eq('process_id', p.id).eq('inspector_id', inspectorId);
         }
+        await syncPaintProcessInspectorToOpenJobs(p.id, inspectorId, checked);
     }
     loadPaintProcesses();
 }
