@@ -144,7 +144,10 @@ async function loadAssignedSteps() {
     // Gate on whether each job has actually started (Actual Start filled on
     // that job's first fab step) - bypasses our own assignment-scoped RLS
     // via a SECURITY DEFINER RPC. Jobs that haven't started are dropped
-    // entirely (not just their sheet link) to avoid clutter.
+    // entirely (not just their sheet link) to avoid clutter. Overall Incharge
+    // (Supervisor) items skip this gate entirely - they need to see and
+    // prepare for their job before work physically begins, unlike a plain
+    // step-assigned inspector who only cares once there's something to do.
     const distinctJobIds = [...new Set(items.map(i => i.jobId).filter(Boolean))];
     const startedMap = {};
     await Promise.all(distinctJobIds.map(async jobId => {
@@ -152,7 +155,7 @@ async function loadAssignedSteps() {
         startedMap[jobId] = !!data;
     }));
 
-    const startedItems = items.filter(item => startedMap[item.jobId]);
+    const startedItems = items.filter(item => item.isSupervisor || startedMap[item.jobId]);
     if (startedItems.length === 0) {
         container.innerHTML = '<p class="pr-empty">No active jobs yet - your assigned sheets will appear here once a job actually starts.</p>';
         return;
