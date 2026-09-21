@@ -488,6 +488,15 @@ function buildFillMap(used) {
     }
 }
 
+function isLightColor(hex) {
+    if (!hex) return true;
+    const h = String(hex).replace('#', '');
+    if (h.length !== 6) return true;
+    const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+    if ([r, g, b].some(isNaN)) return true;
+    return (0.299 * r + 0.587 * g + 0.114 * b) > 180;
+}
+
 let fontColorMap = [];
 
 // A dark fill (like the navy header bands) is usually paired with white text
@@ -747,7 +756,18 @@ function renderGrid() {
             // obvious at a glance what still needs filling in.
             const needsInput = !!options && cell === '';
             const fillColor = (fillMap[r] && fillMap[r][c]) || null;
-            const fontColor = (fontColorMap[r] && fontColorMap[r][c]) || null;
+            let fontColor = (fontColorMap[r] && fontColorMap[r][c]) || null;
+            // A light font color (e.g. white) only makes sense paired with a
+            // dark fill in the original file - if the fill that actually
+            // renders here is light too (needs-input yellow, a light fill,
+            // or no fill at all), that same font color becomes near-
+            // invisible text. Real incident: dropdown cells with white font
+            // (meant for a dark fill) rendering unreadable on plain white/
+            // yellow once the fill didn't carry over to this exact cell.
+            if (fontColor) {
+                const effectiveBg = needsInput ? '#fff3b0' : (fillColor || '#ffffff');
+                if (isLightColor(fontColor) && isLightColor(effectiveBg)) fontColor = null;
+            }
             const inputStyle = (needsInput ? ' background:#fff3b0;' : (fillColor ? (' background:' + fillColor + ';') : '')) + (fontColor ? (' color:' + fontColor + ';') : '');
             const cellId = 'cell_' + r + '_' + c;
             // Padding alone adds ~12px to any control's rendered height, so a
