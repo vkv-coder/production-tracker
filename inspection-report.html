@@ -788,12 +788,25 @@ function renderGrid() {
             // own blank background exposed as a gap around it in that case.
             html += '<td' + spanAttrs + ' style="padding:0; border:1px solid #888; vertical-align:top; width:' + cellWidth + 'px; min-width:' + cellWidth + 'px; height:' + cellHeight + 'px;' + inputStyle + '">';
             if (options) {
-                html += '<select id="' + cellId + '" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" onkeydown="handleCellKeydown(event,' + r + ',' + c + ')" style="border:none; background:transparent; color:inherit; padding:' + vPad + 'px 8px; font-size:13px; width:100%; height:' + cellHeight + 'px; min-height:' + cellHeight + 'px; box-sizing:border-box; display:block;">';
+                // A native <select>'s CLOSED-state text is partly OS-rendered
+                // on phones - no amount of width/font CSS on the <select>
+                // itself reliably stops it clipping the selected value (real
+                // incident: confirmed via the OPEN option list showing the
+                // correct full value, while the closed box still showed it
+                // cut short). Fix: make the <select> fully invisible but
+                // still on top and fully clickable/functional (it's what
+                // actually opens the picker and saves the choice), and show
+                // the real value as a plain, fully CSS-controlled text label
+                // sitting behind it - nothing native left to clip it.
+                html += '<div style="position:relative; width:100%; height:' + cellHeight + 'px;">';
+                html += '<div style="position:absolute; inset:0; z-index:1; display:flex; align-items:center; padding:' + vPad + 'px 18px ' + vPad + 'px 8px; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; box-sizing:border-box;">' + escapeHtml(cell) + '<span style="position:absolute; right:4px; top:50%; transform:translateY(-50%); font-size:9px; color:#666;">&#9662;</span></div>';
+                html += '<select id="' + cellId + '" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" onkeydown="handleCellKeydown(event,' + r + ',' + c + ')" style="position:absolute; inset:0; z-index:2; opacity:0; width:100%; height:100%; border:none; box-sizing:border-box; cursor:pointer;">';
                 html += '<option value=""' + (cell === '' ? ' selected' : '') + '></option>';
                 options.forEach(opt => {
                     html += '<option value="' + escapeHtml(opt) + '"' + (cell === opt ? ' selected' : '') + '>' + escapeHtml(opt) + '</option>';
                 });
                 html += '</select>';
+                html += '</div>';
             } else {
                 html += '<textarea id="' + cellId + '" rows="1" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" onkeydown="handleCellKeydown(event,' + r + ',' + c + ')" oninput="autoGrowCell(this)" style="border:none; background:transparent; color:inherit; padding:' + vPad + 'px 8px; font-size:13px; width:100%; height:' + cellHeight + 'px; min-height:' + cellHeight + 'px; white-space:pre-wrap; overflow-wrap:break-word; resize:none; overflow:hidden; font-family:inherit; display:block; box-sizing:border-box;">' + escapeHtml(cell) + '</textarea>';
             }
