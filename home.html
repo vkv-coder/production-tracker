@@ -2215,13 +2215,13 @@ async function loadFormatActivity() {
     const { data: formats } = await supabaseClient.from('pr_inspection_formats_master').select('id, code, name').eq('company_id', session.companyId).eq('is_active', true).order('code');
     if (!formats || formats.length === 0) { container.innerHTML = '<p class="pr-empty">No formats found.</p>'; return; }
 
-    container.innerHTML = '<table class="pr-table"><tr><th>Code</th><th>Name</th><th>Latest Job</th><th>Edited By</th><th>Edited At</th><th>Last Filled Row</th></tr></table>';
+    container.innerHTML = '<table class="pr-table"><tr><th>Code</th><th>Name</th><th>Latest Job</th><th>Step</th><th>Edited By</th><th>Edited At</th><th>Last Filled Row</th></tr></table>';
     const table = container.querySelector('table');
 
     for (const fmt of formats) {
         const { data: reports } = await supabaseClient
             .from('pr_inspection_reports')
-            .select('job_id, file_path, uploaded_by, uploaded_at, pr_jobs(job_no)')
+            .select('id, job_id, file_path, uploaded_by, uploaded_at, pr_jobs(job_no)')
             .eq('format_id', fmt.id)
             .not('file_path', 'is', null)
             .order('uploaded_at', { ascending: false })
@@ -2230,8 +2230,22 @@ async function loadFormatActivity() {
         const latest = reports && reports[0];
         let rowHtml = '<tr><td>' + escapeHtml(fmt.code) + '</td><td>' + escapeHtml(fmt.name) + '</td>';
         if (!latest) {
-            rowHtml += '<td colspan="4" style="color:#999;">No activity yet</td></tr>';
+            rowHtml += '<td colspan="5" style="color:#999;">No activity yet</td></tr>';
         } else {
+            // Which specific job step this report instance is attached to -
+            // without this, "Latest Job" alone is ambiguous once a job has
+            // several steps using the same format (e.g. the same inspection
+            // sheet reused across steps 12 and 38) - no way to tell which
+            // one was actually just edited.
+            let stepLabel = '-';
+            const [{ data: fabLink }, { data: paintLink }] = await Promise.all([
+                supabaseClient.from('pr_fab_tracking_reports').select('pr_fab_tracking(pr_fab_steps_master(step_order, step_name))').eq('report_id', latest.id).maybeSingle(),
+                supabaseClient.from('pr_paint_tracking_reports').select('pr_paint_tracking(pr_paint_process_master(process_order, process_name))').eq('report_id', latest.id).maybeSingle()
+            ]);
+            const fabStep = fabLink?.pr_fab_tracking?.pr_fab_steps_master;
+            const paintStep = paintLink?.pr_paint_tracking?.pr_paint_process_master;
+            if (fabStep) stepLabel = (fabStep.step_order != null ? fabStep.step_order + '. ' : '') + (fabStep.step_name || '');
+            else if (paintStep) stepLabel = (paintStep.process_order != null ? paintStep.process_order + '. ' : '') + (paintStep.process_name || '');
             let preview = '(could not read)';
             let flagged = false;
             try {
@@ -2244,6 +2258,7 @@ async function loadFormatActivity() {
                 }
             } catch (e) { preview = '(could not read)'; }
             rowHtml += '<td>' + escapeHtml(latest.pr_jobs ? latest.pr_jobs.job_no : '-') + '</td>';
+            rowHtml += '<td>' + escapeHtml(stepLabel) + '</td>';
             rowHtml += '<td>' + escapeHtml(latest.uploaded_by || '-') + '</td>';
             rowHtml += '<td>' + (latest.uploaded_at ? new Date(latest.uploaded_at).toLocaleString() : '-') + '</td>';
             rowHtml += '<td style="font-size:12px;' + (flagged ? ' background:#fde2e1; color:#a8201a; font-weight:600;' : ' color:#444;') + '">' + (flagged ? '⚠️ ' : '') + escapeHtml(preview) + '</td></tr>';
