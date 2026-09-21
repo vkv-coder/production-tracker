@@ -93,6 +93,48 @@ async function init() {
     paintItems = items || [];
 
     loadFabTable();
+    restoreScrollTarget();
+}
+
+// Coming back from filling in a format used to always land back at the top
+// of the Fab/Paint list, forcing a long re-scroll to find whatever step
+// (e.g. #38) was just being worked on. The report links below carry the
+// step's own trackingId/type through to inspection-report.html, which
+// hands it back via goBack(). Polls for the target element instead of a
+// single requestAnimationFrame since loadFabTable()/loadPaintTable() (and,
+// for paint, switchTab/selectPaintItem) aren't awaited here and finish on
+// their own schedule.
+async function restoreScrollTarget() {
+    const params = new URLSearchParams(window.location.search);
+    const targetStep = params.get('step');
+    const targetType = params.get('type');
+    if (!targetStep || !targetType) return;
+
+    window.history.replaceState({}, '', 'job-detail.html?job=' + encodeURIComponent(jobId));
+
+    if (targetType === 'paint') {
+        switchTab('paint');
+        const { data: row } = await supabaseClient.from('pr_paint_tracking').select('paint_item_id').eq('id', targetStep).maybeSingle();
+        if (row && row.paint_item_id && row.paint_item_id !== currentPaintItemId) {
+            const idx = paintItems.findIndex(p => p.id === row.paint_item_id);
+            const btn = document.querySelectorAll('#paintItemTabs button')[idx];
+            if (btn) selectPaintItem(row.paint_item_id, btn);
+        }
+    }
+
+    scrollToStepWhenReady('step-' + targetType + '-' + targetStep);
+}
+
+function scrollToStepWhenReady(elId, attempts) {
+    attempts = attempts || 0;
+    const el = document.getElementById(elId);
+    if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.style.outline = '3px solid #1e3a5f';
+        setTimeout(() => { el.style.outline = ''; }, 2000);
+    } else if (attempts < 20) {
+        setTimeout(() => scrollToStepWhenReady(elId, attempts + 1), 100);
+    }
 }
 
 async function uploadProcessImage(inputEl, sourceCol, trackingId, reloadFn) {
@@ -255,7 +297,7 @@ async function loadFabTable() {
         const delayed = startDelayed || endDelayed;
         const cardStyle = delayed ? ' style="border:2px solid #dc3545; background:#fff5f5;"' : '';
 
-        html += '<div class="pr-card"' + cardStyle + '>';
+        html += '<div class="pr-card" id="step-fab-' + r.id + '"' + cardStyle + '>';
         html += '<div class="pr-card-title">' + (r.pr_fab_steps_master?.step_order || '') + '. ' + (r.pr_fab_steps_master?.step_name || '') + (delayed ? ' <span style="color:#dc3545; font-size:12px;">&#9888; Delayed</span>' : '') + '</div>';
 
         const fabLinks = reportLinksMap[r.id] || [];
@@ -264,7 +306,7 @@ async function loadFabTable() {
         if (fabLinks.length === 0) html += '<span style="font-size:12px; color:#999;">None attached</span>';
         fabLinks.forEach(l => {
             html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' +
-                '<a href="inspection-report.html?job=' + jobId + '&report=' + l.reportId + '" style="color:#1e3a5f;">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a></span>';
+                '<a href="inspection-report.html?job=' + jobId + '&report=' + l.reportId + '&step=' + r.id + '&type=fab" style="color:#1e3a5f;">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a></span>';
         });
         html += '</div>';
 
@@ -500,7 +542,7 @@ async function loadPaintTable() {
 
     let html = '';
     data.forEach(r => {
-        html += '<div class="pr-card">';
+        html += '<div class="pr-card" id="step-paint-' + r.id + '">';
         html += '<div class="pr-card-title">' + (r.pr_paint_process_master?.process_order || '') + '. ' + (r.pr_paint_process_master?.process_name || '') + '</div>';
 
         const paintLinks = paintReportLinksMap[r.id] || [];
@@ -509,7 +551,7 @@ async function loadPaintTable() {
         if (paintLinks.length === 0) html += '<span style="font-size:12px; color:#999;">None attached</span>';
         paintLinks.forEach(l => {
             html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' +
-                '<a href="inspection-report.html?job=' + jobId + '&report=' + l.reportId + '" style="color:#1e3a5f;">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a></span>';
+                '<a href="inspection-report.html?job=' + jobId + '&report=' + l.reportId + '&step=' + r.id + '&type=paint" style="color:#1e3a5f;">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a></span>';
         });
         html += '</div>';
 

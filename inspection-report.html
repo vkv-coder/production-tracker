@@ -74,6 +74,9 @@ async function goBack() {
         }
     } else {
         dest = isoFormatId ? 'home.html' : ('job-detail.html?job=' + jobId);
+        if (!isoFormatId && stepTrackingId && stepType) {
+            dest += '&step=' + encodeURIComponent(stepTrackingId) + '&type=' + encodeURIComponent(stepType);
+        }
     }
     if (lockHeld && report) {
         try {
