@@ -735,6 +735,7 @@ function renderGrid() {
             if (mergeCovered.has(r + ',' + c) && cell === '') return;
             const span = mergeAnchors[r + ',' + c];
             const spanAttrs = span ? (' rowspan="' + span.rowSpan + '" colspan="' + span.colSpan + '"') : '';
+            const options = (validationMap && validationMap[r] && validationMap[r][c]) || null;
             let cellWidth = colWidths[c] || 130;
             if (span) { for (let k = 1; k < span.colSpan; k++) cellWidth += (colWidths[c + k] || 130); }
             // The source Excel column width wasn't necessarily sized for what
@@ -743,14 +744,19 @@ function renderGrid() {
             // auto here (no table-layout:fixed), so widening just THIS cell's
             // hint is enough: the browser sizes the whole column to its
             // widest cell automatically, leaving a genuinely blank/short
-            // column exactly as narrow as before.
+            // column exactly as narrow as before. A <select> needs extra
+            // room on top of the text itself for its native dropdown arrow
+            // icon (~8px padding each side + ~24px arrow) - without that
+            // buffer the selected value's text still got clipped even after
+            // the column widened, since a <select> clips its own text
+            // silently instead of wrapping like a <textarea> does.
             if (!span && cell) {
-                const contentWidth = Math.min(360, cell.length * 7 + 20);
+                const extra = options ? 56 : 20;
+                const contentWidth = Math.min(360, cell.length * 7 + extra);
                 if (contentWidth > cellWidth) cellWidth = contentWidth;
             }
             let cellHeight = rowHeights[r] || 24;
             if (span) { for (let k = 1; k < span.rowSpan; k++) cellHeight += (rowHeights[r + k] || 24); }
-            const options = (validationMap && validationMap[r] && validationMap[r][c]) || null;
             // Dropdown cells are the form's designated inspector-input fields
             // (OK/NOT OK etc.) — highlight them while still blank so it's
             // obvious at a glance what still needs filling in.
