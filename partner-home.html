@@ -48,6 +48,7 @@ if (session && session.role !== 'Partner') {
 
 let jobGroups = {}; // jobId -> { job, items: [] }
 let currentJobId = null;
+let jobTabButtons = {}; // jobId -> button element, for restoreScrollTarget()
 
 function switchMainTab(tab) {
     document.querySelectorAll('.pr-tab[data-maintab]').forEach(el => el.classList.remove('active'));
@@ -207,6 +208,7 @@ async function loadAssignedSteps() {
     const jobIds = Object.keys(jobGroups);
     currentJobId = jobIds[0];
 
+    jobTabButtons = {};
     if (jobIds.length > 1) {
         jobIds.forEach((jobId, idx) => {
             const label = jobGroups[jobId].job ? jobGroups[jobId].job.job_no : 'Job';
@@ -215,10 +217,40 @@ async function loadAssignedSteps() {
             btn.textContent = label;
             btn.onclick = () => selectJob(jobId, btn);
             tabsContainer.appendChild(btn);
+            jobTabButtons[jobId] = btn;
         });
     }
 
     renderSelectedJob();
+    restoreScrollTarget();
+}
+
+// Coming back from filling in a format used to always land back at the top
+// of the list, forcing a long re-scroll to find whatever step (e.g. #38)
+// the inspector was just on. The report link above carries the step's own
+// trackingId/type through to inspection-report.html, which hands it back
+// via goBack() - this switches to the right job tab (if more than one) and
+// scrolls/highlights the exact card, using the id set on it above.
+function restoreScrollTarget() {
+    const params = new URLSearchParams(window.location.search);
+    const targetStep = params.get('step');
+    const targetType = params.get('type');
+    const targetJob = params.get('job');
+    if (!targetStep || !targetType) return;
+
+    if (targetJob && jobGroups[targetJob] && targetJob !== currentJobId) {
+        selectJob(targetJob, jobTabButtons[targetJob]);
+    }
+
+    window.history.replaceState({}, '', 'partner-home.html');
+
+    requestAnimationFrame(() => {
+        const el = document.getElementById('step-' + targetType + '-' + targetStep);
+        if (!el) return;
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.style.outline = '3px solid #1e3a5f';
+        setTimeout(() => { el.style.outline = ''; }, 2000);
+    });
 }
 
 function selectJob(jobId, btnEl) {
@@ -235,7 +267,7 @@ function renderSelectedJob() {
 
     let html = '';
     group.items.forEach(item => {
-        html += '<div class="pr-card">';
+        html += '<div class="pr-card" id="step-' + item.type + '-' + item.trackingId + '">';
         html += '<div class="pr-card-title">' + (item.job ? escapeHtml(item.job.job_no) : 'Job') + (item.job && item.job.customer_name ? ' - ' + escapeHtml(item.job.customer_name) : '') + '</div>';
         html += '<div class="pr-card-sub">' + (item.job ? escapeHtml(item.job.status || '') + ' &middot; ' : '') + (item.order != null ? item.order + '. ' : '') + escapeHtml(item.stepName || '') + '</div>';
 
@@ -272,7 +304,7 @@ function renderSelectedJob() {
             html += '<span style="font-size:12px; color:#999;">No inspection sheet on this step.</span>';
         }
         item.links.forEach(l => {
-            html += '<a class="pr-btn pr-btn-outline" style="display:inline-block;" href="inspection-report.html?job=' + item.jobId + '&report=' + l.reportId + '">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a>';
+            html += '<a class="pr-btn pr-btn-outline" style="display:inline-block;" href="inspection-report.html?job=' + item.jobId + '&report=' + l.reportId + '&step=' + item.trackingId + '&type=' + item.type + '">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a>';
         });
         html += '</div>';
 

@@ -39,6 +39,8 @@ const urlParams = new URLSearchParams(window.location.search);
 const reportId = urlParams.get('report');
 const jobId = urlParams.get('job');
 const isoFormatId = urlParams.get('isoformat');
+const stepTrackingId = urlParams.get('step');
+const stepType = urlParams.get('type');
 
 let jobRecord = null;
 let report = null;
@@ -67,6 +69,9 @@ async function goBack() {
     let dest;
     if (session.role === 'Partner') {
         dest = 'partner-home.html';
+        if (stepTrackingId && stepType) {
+            dest += '?job=' + encodeURIComponent(jobId || '') + '&step=' + encodeURIComponent(stepTrackingId) + '&type=' + encodeURIComponent(stepType);
+        }
     } else {
         dest = isoFormatId ? 'home.html' : ('job-detail.html?job=' + jobId);
     }
@@ -723,6 +728,17 @@ function renderGrid() {
             const spanAttrs = span ? (' rowspan="' + span.rowSpan + '" colspan="' + span.colSpan + '"') : '';
             let cellWidth = colWidths[c] || 130;
             if (span) { for (let k = 1; k < span.colSpan; k++) cellWidth += (colWidths[c + k] || 130); }
+            // The source Excel column width wasn't necessarily sized for what
+            // an inspector actually types (a "Remark" column set narrow for a
+            // short code, then filled with a full sentence) - table layout is
+            // auto here (no table-layout:fixed), so widening just THIS cell's
+            // hint is enough: the browser sizes the whole column to its
+            // widest cell automatically, leaving a genuinely blank/short
+            // column exactly as narrow as before.
+            if (!span && cell) {
+                const contentWidth = Math.min(360, cell.length * 7 + 20);
+                if (contentWidth > cellWidth) cellWidth = contentWidth;
+            }
             let cellHeight = rowHeights[r] || 24;
             if (span) { for (let k = 1; k < span.rowSpan; k++) cellHeight += (rowHeights[r + k] || 24); }
             const options = (validationMap && validationMap[r] && validationMap[r][c]) || null;
