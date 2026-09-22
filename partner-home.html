@@ -229,14 +229,32 @@ async function loadAssignedSteps() {
 // of the list, forcing a long re-scroll to find whatever step (e.g. #38)
 // the inspector was just on. The report link above carries the step's own
 // trackingId/type through to inspection-report.html, which hands it back
-// via goBack() - this switches to the right job tab (if more than one) and
-// scrolls/highlights the exact card, using the id set on it above.
+// via goBack() by building a special return URL - but that only fires if
+// the in-app Back BUTTON is tapped. A phone's own back gesture/button
+// instead just pops browser history straight to the plain
+// partner-home.html URL from before the format was ever opened (no step
+// info at all), bypassing that mechanism entirely. rememberStep() below
+// writes the same info to sessionStorage the moment the format link is
+// tapped - independent of how the user later navigates back, checked here
+// FIRST before falling back to the URL-param version.
+function rememberStep(type, id, jobId) {
+    try { sessionStorage.setItem('pr_lastStep', JSON.stringify({ type: type, id: id, jobId: jobId })); } catch (e) {}
+}
+
 function restoreScrollTarget() {
     const params = new URLSearchParams(window.location.search);
-    const targetStep = params.get('step');
-    const targetType = params.get('type');
-    const targetJob = params.get('job');
+    let targetStep = params.get('step');
+    let targetType = params.get('type');
+    let targetJob = params.get('job');
+
+    if (!targetStep || !targetType) {
+        try {
+            const remembered = JSON.parse(sessionStorage.getItem('pr_lastStep') || 'null');
+            if (remembered) { targetType = remembered.type; targetStep = remembered.id; targetJob = remembered.jobId; }
+        } catch (e) {}
+    }
     if (!targetStep || !targetType) return;
+    sessionStorage.removeItem('pr_lastStep');
 
     if (targetJob && jobGroups[targetJob] && targetJob !== currentJobId) {
         selectJob(targetJob, jobTabButtons[targetJob]);
@@ -304,7 +322,7 @@ function renderSelectedJob() {
             html += '<span style="font-size:12px; color:#999;">No inspection sheet on this step.</span>';
         }
         item.links.forEach(l => {
-            html += '<a class="pr-btn pr-btn-outline" style="display:inline-block;" href="inspection-report.html?job=' + item.jobId + '&report=' + l.reportId + '&step=' + item.trackingId + '&type=' + item.type + '">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a>';
+            html += '<a class="pr-btn pr-btn-outline" style="display:inline-block;" href="inspection-report.html?job=' + item.jobId + '&report=' + l.reportId + '&step=' + item.trackingId + '&type=' + item.type + '" onclick="rememberStep(\'' + item.type + '\',\'' + item.trackingId + '\',\'' + item.jobId + '\')">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a>';
         });
         html += '</div>';
 

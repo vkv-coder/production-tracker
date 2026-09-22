@@ -100,15 +100,34 @@ async function init() {
 // of the Fab/Paint list, forcing a long re-scroll to find whatever step
 // (e.g. #38) was just being worked on. The report links below carry the
 // step's own trackingId/type through to inspection-report.html, which
-// hands it back via goBack(). Polls for the target element instead of a
-// single requestAnimationFrame since loadFabTable()/loadPaintTable() (and,
-// for paint, switchTab/selectPaintItem) aren't awaited here and finish on
-// their own schedule.
+// hands it back via goBack() by building a special return URL - but that
+// only fires if the in-app Back BUTTON is tapped. A phone's own back
+// gesture/button instead just pops browser history straight to whatever
+// plain job-detail.html?job=X URL was there before the format was ever
+// opened (no step info at all), completely bypassing that mechanism.
+// rememberStep() below writes the same info to sessionStorage the moment
+// the format link is tapped - independent of how the user later navigates
+// back, checked here FIRST before falling back to the URL-param version.
+function rememberStep(type, id) {
+    try { sessionStorage.setItem('pr_lastStep', JSON.stringify({ type: type, id: id })); } catch (e) {}
+}
+
+// Polls for the target element instead of a single requestAnimationFrame
+// since loadFabTable()/loadPaintTable() (and, for paint, switchTab/
+// selectPaintItem) aren't awaited here and finish on their own schedule.
 async function restoreScrollTarget() {
     const params = new URLSearchParams(window.location.search);
-    const targetStep = params.get('step');
-    const targetType = params.get('type');
+    let targetStep = params.get('step');
+    let targetType = params.get('type');
+
+    if (!targetStep || !targetType) {
+        try {
+            const remembered = JSON.parse(sessionStorage.getItem('pr_lastStep') || 'null');
+            if (remembered) { targetType = remembered.type; targetStep = remembered.id; }
+        } catch (e) {}
+    }
     if (!targetStep || !targetType) return;
+    sessionStorage.removeItem('pr_lastStep');
 
     window.history.replaceState({}, '', 'job-detail.html?job=' + encodeURIComponent(jobId));
 
@@ -306,7 +325,7 @@ async function loadFabTable() {
         if (fabLinks.length === 0) html += '<span style="font-size:12px; color:#999;">None attached</span>';
         fabLinks.forEach(l => {
             html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' +
-                '<a href="inspection-report.html?job=' + jobId + '&report=' + l.reportId + '&step=' + r.id + '&type=fab" style="color:#1e3a5f;">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a></span>';
+                '<a href="inspection-report.html?job=' + jobId + '&report=' + l.reportId + '&step=' + r.id + '&type=fab" onclick="rememberStep(\'fab\',\'' + r.id + '\')" style="color:#1e3a5f;">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a></span>';
         });
         html += '</div>';
 
@@ -551,7 +570,7 @@ async function loadPaintTable() {
         if (paintLinks.length === 0) html += '<span style="font-size:12px; color:#999;">None attached</span>';
         paintLinks.forEach(l => {
             html += '<span style="background:#e6edf5; color:#1e3a5f; padding:4px 8px; border-radius:12px; font-size:12px; display:inline-flex; align-items:center; gap:6px;">' +
-                '<a href="inspection-report.html?job=' + jobId + '&report=' + l.reportId + '&step=' + r.id + '&type=paint" style="color:#1e3a5f;">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a></span>';
+                '<a href="inspection-report.html?job=' + jobId + '&report=' + l.reportId + '&step=' + r.id + '&type=paint" onclick="rememberStep(\'paint\',\'' + r.id + '\')" style="color:#1e3a5f;">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a></span>';
         });
         html += '</div>';
 
