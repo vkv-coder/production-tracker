@@ -209,6 +209,38 @@ async function initIsoMode() {
 // both believe they got the lock.
 const LOCK_TIMEOUT_MS = 15 * 60 * 1000;
 
+// Covers the gap goBack()'s own cleanup can't: closing the tab/browser
+// directly, swiping it away, or navigating off via the address bar/back
+// gesture never runs goBack(), leaving the lock stuck for the full 15-minute
+// timeout. A normal supabaseClient call would get cancelled mid-flight once
+// the page is actually unloading - fetch's keepalive flag is built for
+// exactly this ("send this even though the page is going"), and (unlike
+// sendBeacon) still lets us set the apikey/Authorization headers PostgREST
+// requires. Only ever clears the lock if it's still OURS (locked_token
+// match, same guard goBack() already uses), so this can never step on
+// someone else's active lock. Best-effort: an OS-level kill (phone reclaims
+// the app from the background) fires no JS event at all - the 15-minute
+// timeout and the Force Unlock button remain the fallback for that case.
+function releaseLockOnUnload() {
+    if (!lockHeld || !report) return;
+    const url = SUPABASE_URL + '/rest/v1/pr_inspection_reports?id=eq.' + encodeURIComponent(report.id) + '&locked_token=eq.' + encodeURIComponent(getLockToken());
+    try {
+        fetch(url, {
+            method: 'PATCH',
+            headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({ locked_by: null, locked_token: null, locked_at: null }),
+            keepalive: true
+        });
+    } catch (e) { /* best-effort - the 15-minute timeout still catches this either way */ }
+}
+window.addEventListener('pagehide', releaseLockOnUnload);
+window.addEventListener('beforeunload', releaseLockOnUnload);
+
 function getLockToken() {
     let token = sessionStorage.getItem('pr_lock_token');
     if (!token) {
