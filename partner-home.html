@@ -323,6 +323,7 @@ function renderSelectedJob() {
         }
         item.links.forEach(l => {
             html += '<a class="pr-btn pr-btn-outline" style="display:inline-block;" href="inspection-report.html?job=' + item.jobId + '&report=' + l.reportId + '&step=' + item.trackingId + '&type=' + item.type + '" onclick="rememberStep(\'' + item.type + '\',\'' + item.trackingId + '\',\'' + item.jobId + '\')">&#128206; ' + escapeHtml(l.code) + (l.hasFile ? '' : ' (empty)') + '</a>';
+            html += '<label class="pr-btn pr-btn-outline" style="cursor:pointer;" title="Upload a filled copy of this format directly (replaces the current one)">&#128228;<input type="file" accept=".xlsx" style="display:none;" onchange="uploadReportFileDirectly(this,\'' + l.reportId + '\')"></label>';
         });
         html += '</div>';
 
@@ -352,6 +353,33 @@ async function updatePaintField(trackingId, field, value) {
     updateObj[field] = value === '' ? null : value;
     const { error } = await supabaseClient.from('pr_paint_tracking').update(updateObj).eq('id', trackingId);
     if (error) { alert('Error: ' + error.message); return; }
+    loadAssignedSteps();
+}
+
+// Lets a filled copy of the SAME format (edited on a real computer outside
+// the app - easier for a complex sheet than the phone's grid editor) be
+// attached directly, the same way an image is attached - reuses the
+// report's existing storage path if it already has a file (so this
+// genuinely overwrites/replaces rather than piling up separate copies),
+// or picks a fresh path on first upload. Bypasses the in-app grid editor
+// entirely; also clears any stale edit-lock so the report isn't left
+// stuck "locked" from a half-finished in-app edit.
+async function uploadReportFileDirectly(inputEl, reportId) {
+    const file = inputEl.files[0];
+    if (!file) return;
+    if (!confirm('Replace the current filled format with this file? This cannot be undone.')) { inputEl.value = ''; return; }
+
+    const { data: existing } = await supabaseClient.from('pr_inspection_reports').select('file_path').eq('id', reportId).maybeSingle();
+    const path = (existing && existing.file_path) || (session.companyId + '/' + crypto.randomUUID() + '/' + file.name);
+
+    const { error: uploadError } = await supabaseClient.storage.from('inspection-sheets').upload(path, file, { upsert: true });
+    if (uploadError) { alert('Error uploading: ' + uploadError.message); inputEl.value = ''; return; }
+
+    const { error } = await supabaseClient.from('pr_inspection_reports')
+        .update({ file_path: path, file_name: file.name, uploaded_by: session.name || '', uploaded_at: new Date().toISOString(), locked_by: null, locked_token: null, locked_at: null })
+        .eq('id', reportId);
+    if (error) { alert('Error saving: ' + error.message); inputEl.value = ''; return; }
+    inputEl.value = '';
     loadAssignedSteps();
 }
 

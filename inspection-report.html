@@ -803,7 +803,7 @@ function renderGrid() {
                 // sitting behind it - nothing native left to clip it.
                 html += '<div style="position:relative; width:100%; height:' + cellHeight + 'px;">';
                 html += '<div style="position:absolute; inset:0; z-index:1; display:flex; align-items:center; padding:' + vPad + 'px 18px ' + vPad + 'px 8px; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; box-sizing:border-box;">' + escapeHtml(cell) + '<span style="position:absolute; right:4px; top:50%; transform:translateY(-50%); font-size:9px; color:#666;">&#9662;</span></div>';
-                html += '<select id="' + cellId + '" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" onkeydown="handleCellKeydown(event,' + r + ',' + c + ')" style="position:absolute; inset:0; z-index:2; opacity:0; width:100%; height:100%; border:none; box-sizing:border-box; cursor:pointer;">';
+                html += '<select id="' + cellId + '" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" onkeydown="handleCellKeydown(event,' + r + ',' + c + ')" onpaste="handleGridPaste(event,' + r + ',' + c + ')" style="position:absolute; inset:0; z-index:2; opacity:0; width:100%; height:100%; border:none; box-sizing:border-box; cursor:pointer;">';
                 html += '<option value=""' + (cell === '' ? ' selected' : '') + '></option>';
                 options.forEach(opt => {
                     html += '<option value="' + escapeHtml(opt) + '"' + (cell === opt ? ' selected' : '') + '>' + escapeHtml(opt) + '</option>';
@@ -811,7 +811,7 @@ function renderGrid() {
                 html += '</select>';
                 html += '</div>';
             } else {
-                html += '<textarea id="' + cellId + '" rows="1" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" onkeydown="handleCellKeydown(event,' + r + ',' + c + ')" oninput="autoGrowCell(this)" style="border:none; background:transparent; color:inherit; padding:' + vPad + 'px 8px; font-size:13px; width:100%; height:' + cellHeight + 'px; min-height:' + cellHeight + 'px; white-space:pre-wrap; overflow-wrap:break-word; resize:none; overflow:hidden; font-family:inherit; display:block; box-sizing:border-box;">' + escapeHtml(cell) + '</textarea>';
+                html += '<textarea id="' + cellId + '" rows="1" onchange="updateCell(' + r + ',' + c + ',this.value)" onfocus="setActiveCell(' + r + ',' + c + ')" onkeydown="handleCellKeydown(event,' + r + ',' + c + ')" onpaste="handleGridPaste(event,' + r + ',' + c + ')" oninput="autoGrowCell(this)" style="border:none; background:transparent; color:inherit; padding:' + vPad + 'px 8px; font-size:13px; width:100%; height:' + cellHeight + 'px; min-height:' + cellHeight + 'px; white-space:pre-wrap; overflow-wrap:break-word; resize:none; overflow:hidden; font-family:inherit; display:block; box-sizing:border-box;">' + escapeHtml(cell) + '</textarea>';
             }
             html += '</td>';
         });
@@ -872,6 +872,37 @@ function handleCellKeydown(e, r, c) {
         if (document.getElementById('cell_' + nr + '_' + nc)) { focusCell(nr, nc); return; }
         nr += dr; nc += dc;
     }
+}
+
+// Lets a whole range of cells copied from outside (Excel, another sheet,
+// etc.) be pasted starting at the focused cell, spanning multiple rows/
+// columns like a normal spreadsheet paste - tab-separated values within a
+// row, newline-separated rows. A single plain value (no tabs/newlines) is
+// deliberately left to the browser's own default paste behavior instead of
+// being intercepted here, so normal single-cell typing/pasting is unaffected.
+function handleGridPaste(e, r, c) {
+    const text = (e.clipboardData || window.clipboardData).getData('text');
+    if (!text || (!text.includes('\t') && !text.includes('\n'))) return;
+    e.preventDefault();
+
+    const rows = text.replace(/\r/g, '').split('\n');
+    if (rows.length && rows[rows.length - 1] === '') rows.pop(); // trailing newline from the copy source
+
+    rows.forEach((rowText, ri) => {
+        rowText.split('\t').forEach((val, ci) => {
+            const tr = r + ri, tc = c + ci;
+            const el = document.getElementById('cell_' + tr + '_' + tc);
+            if (!el) return;
+            if (el.tagName === 'SELECT') {
+                const hasOption = Array.from(el.options).some(o => o.value === val);
+                if (hasOption) { el.value = val; updateCell(tr, tc, val); }
+            } else {
+                el.value = val;
+                autoGrowCell(el);
+                updateCell(tr, tc, val);
+            }
+        });
+    });
 }
 
 function addRow() {
