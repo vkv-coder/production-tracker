@@ -62,6 +62,18 @@ let sheetNames = [];
 let currentSheetIndex = 0;
 let validationMap = null;
 let validationDiagnostic = '';
+// Cells whose dropdown list depends on another cell in the same row (a
+// "cascading" dropdown, e.g. pick a Category before a Size list even exists) -
+// { r, c, formula1, absRow, anchorRow }, rebuilt per sheet load, consulted by
+// updateCell() to refresh the dependent cell whenever its trigger changes.
+let dependentValidations = [];
+let usedStartRow = 1;
+let usedStartCol = 1;
+// name -> raw refersTo text (e.g. "Lists!$A$2:$A$84"), parsed once per file
+// from workbook.xml's <definedNames> - a dataValidation formula1 is often a
+// bare name like this instead of a literal range, especially for cascading
+// dropdowns built with INDIRECT(VLOOKUP(...)).
+let definedNamesMap = {};
 
 let lockHeld = false;
 
@@ -234,6 +246,7 @@ async function loadSheetIntoGrid() {
     sheetNames = [];
     currentSheetIndex = 0;
     validationMap = null;
+    dependentValidations = [];
     mergeAnchors = {};
     mergeCovered = new Set();
     colWidths = [];
@@ -241,6 +254,7 @@ async function loadSheetIntoGrid() {
     fillMap = [];
     fontColorMap = [];
     rawValidationsBySheet = {};
+    definedNamesMap = {};
 
     if (report.file_path) {
         const { data: blob, error } = await supabaseClient.storage.from('inspection-sheets').download(report.file_path);
@@ -288,6 +302,7 @@ function loadSheetFromWorkbook(sheetIndex) {
     if (!used) {
         gridData = blankGrid();
         validationMap = gridData.map(row => row.map(() => null));
+        dependentValidations = [];
         mergeAnchors = {};
         mergeCovered = new Set();
         colWidths = [];
@@ -311,9 +326,12 @@ function loadSheetFromWorkbook(sheetIndex) {
     const startCell = used.startCell();
     const startRow = startCell.rowNumber();
     const startCol = startCell.columnNumber();
+    usedStartRow = startRow;
+    usedStartCol = startCol;
     const rawEntries = rawValidationsBySheet[sheet.name()] || [];
 
     let dropdownCellCount = 0;
+    dependentValidations = [];
     validationMap = gridData.map((row, r) => row.map((cellVal, c) => {
         // Only ever skip a cell as "merge covered" if it's genuinely blank —
         // never let a possibly-wrong merge parse hide real content/a dropdown.
@@ -321,8 +339,14 @@ function loadSheetFromWorkbook(sheetIndex) {
         const absRow = startRow + r, absCol = startCol + c;
         const match = rawEntries.find(entry => isAddressInSqref(absRow, absCol, entry.sqref));
         if (!match) return null;
-        const opts = resolveListOptions(match.formula1, sheet);
+        const firstAddr = match.sqref.split(/\s+/)[0].split(':')[0];
+        const anchor = parseCellRef(firstAddr);
+        const anchorRow = anchor ? anchor.row : absRow;
+        const opts = resolveListOptions(match.formula1, sheet, { absRow: absRow, anchorRow: anchorRow, startRow: startRow, startCol: startCol });
         if (opts) dropdownCellCount++;
+        if (isCascadingFormula(match.formula1)) {
+            dependentValidations.push({ r: r, c: c, formula1: match.formula1, absRow: absRow, anchorRow: anchorRow });
+        }
         return opts;
     }));
     const dimNote = gridData.length + ' rows x ' + (gridData[0] ? gridData[0].length : 0) + ' cols detected';
@@ -363,6 +387,15 @@ async function extractValidationsFromXlsx(blob) {
         if (!workbookXmlFile) return;
         const workbookDoc = parser.parseFromString(await workbookXmlFile.async('string'), 'application/xml');
         const sheetNodes = Array.from(workbookDoc.getElementsByTagName('sheet'));
+
+        definedNamesMap = {};
+        Array.from(workbookDoc.getElementsByTagName('definedName')).forEach(dn => {
+            const name = dn.getAttribute('name');
+            // Skip sheet-scoped names (e.g. Excel's own hidden _FilterDatabase) -
+            // every dropdown-related name in practice is workbook-scoped.
+            if (!name || dn.getAttribute('localSheetId') !== null) return;
+            definedNamesMap[name] = (dn.textContent || '').trim();
+        });
 
         const relsMap = {};
         const relsFile = zip.file('xl/_rels/workbook.xml.rels');
@@ -651,33 +684,102 @@ function buildMergeMaps(sheet, used) {
     }
 }
 
-// A cell's dataValidation() formula1 is either a literal quoted list
-// ("Yes,No,NA") or a cell range reference (optionally "OtherSheet!A1:A5").
-// Resolve either form into a plain array of option strings, or null if it
-// can't be parsed — cells fall back to a normal wrapped text box in that case.
-function resolveListOptions(formula1, sheet) {
-    if (!formula1) return null;
-    const trimmed = String(formula1).trim();
-    if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-        return trimmed.slice(1, -1).split(',').map(s => s.trim()).filter(s => s !== '');
-    }
+function colLettersToNumber(letters) {
+    let col = 0;
+    const s = String(letters).toUpperCase();
+    for (let i = 0; i < s.length; i++) col = col * 26 + (s.charCodeAt(i) - 64);
+    return col;
+}
+
+// Resolves a plain range reference (optionally "OtherSheet!A1:A5", optional
+// $ signs) into its raw 2D grid of string values — needed (not flattened) so
+// a cascading VLOOKUP formula can match on column 1 and return column N.
+function resolveRangeRef2D(refText, defaultSheetName) {
     try {
-        let sheetName = sheet.name();
-        let rangeRef = trimmed;
-        const bangIdx = trimmed.indexOf('!');
+        let sheetName = defaultSheetName;
+        let rangeRef = String(refText).trim();
+        const bangIdx = rangeRef.indexOf('!');
         if (bangIdx !== -1) {
-            sheetName = trimmed.slice(0, bangIdx).replace(/^'|'$/g, '');
-            rangeRef = trimmed.slice(bangIdx + 1);
+            sheetName = rangeRef.slice(0, bangIdx).replace(/^'|'$/g, '');
+            rangeRef = rangeRef.slice(bangIdx + 1);
         }
         rangeRef = rangeRef.replace(/\$/g, '');
         const refSheet = currentWorkbook.sheet(sheetName);
         if (!refSheet) return null;
         const vals = refSheet.range(rangeRef).value();
-        const flat = [].concat(...vals).filter(v => v !== null && v !== undefined && v !== '');
-        return flat.length ? flat.map(String) : null;
+        if (!Array.isArray(vals)) return null;
+        return vals.map(row => (Array.isArray(row) ? row : [row]).map(v => (v === null || v === undefined) ? '' : String(v)));
     } catch (e) {
         return null;
     }
+}
+
+function resolveRangeRef(refText, defaultSheetName) {
+    const vals2d = resolveRangeRef2D(refText, defaultSheetName);
+    if (!vals2d) return null;
+    const flat = [].concat(...vals2d).filter(v => v !== '');
+    return flat.length ? flat : null;
+}
+
+// Matches the standard Excel "cascading dropdown" pattern:
+// INDIRECT(VLOOKUP($B6, SomeMapName, 2, 0)) — look up the value of another
+// cell in the SAME row inside a 2-column map range/name, then treat the
+// matched row's Nth column as the name of the actual option list.
+const CASCADING_FORMULA_RE = /^INDIRECT\(\s*VLOOKUP\(\s*\$?([A-Za-z]+)\$?(\d+)\s*,\s*([^,]+?)\s*,\s*(\d+)\s*,\s*(?:0|FALSE)\s*\)\s*\)$/i;
+
+function isCascadingFormula(formula1) {
+    return !!formula1 && CASCADING_FORMULA_RE.test(String(formula1).trim());
+}
+
+// A cell's dataValidation() formula1 can be: a literal quoted list
+// ("Yes,No,NA"); a bare defined name (e.g. "Categories"); a plain cell range
+// reference (optionally "OtherSheet!A1:A5"); or a cascading
+// INDIRECT(VLOOKUP(...)) formula whose result depends on another cell in the
+// same row (ctx.absRow/ctx.anchorRow/ctx.startRow/ctx.startCol locate that
+// trigger cell in the live grid). Resolves to a plain array of option
+// strings, or null if it can't be parsed — cells fall back to a normal
+// wrapped text box in that case.
+function resolveListOptions(formula1, sheet, ctx) {
+    if (!formula1) return null;
+    let trimmed = String(formula1).trim();
+    if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+        return trimmed.slice(1, -1).split(',').map(s => s.trim()).filter(s => s !== '');
+    }
+
+    const cascadeMatch = trimmed.match(CASCADING_FORMULA_RE);
+    if (cascadeMatch) {
+        if (!ctx) return null;
+        try {
+            const triggerColLetters = cascadeMatch[1];
+            const formulaRow = parseInt(cascadeMatch[2], 10);
+            const mapRef = cascadeMatch[3].trim();
+            const colIdx = parseInt(cascadeMatch[4], 10);
+            const shift = ctx.absRow - ctx.anchorRow;
+            const triggerAbsRow = formulaRow + shift;
+            const triggerR = triggerAbsRow - ctx.startRow;
+            const triggerC = colLettersToNumber(triggerColLetters) - ctx.startCol;
+            const triggerVal = (gridData[triggerR] && gridData[triggerR][triggerC] !== undefined) ? String(gridData[triggerR][triggerC]).trim() : '';
+            if (!triggerVal) return null;
+            const mapRange = definedNamesMap[mapRef] || mapRef;
+            const mapVals2d = resolveRangeRef2D(mapRange, sheet.name());
+            if (!mapVals2d) return null;
+            const matchRow = mapVals2d.find(row => String(row[0]).trim() === triggerVal);
+            if (!matchRow) return null;
+            const target = matchRow[colIdx - 1];
+            if (!target) return null;
+            return resolveListOptions(target, sheet, ctx);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // Bare defined-name reference (e.g. "Categories") — substitute its target
+    // range text and fall through to the plain range-ref handling below.
+    if (/^[A-Za-z_][A-Za-z0-9_.]*$/.test(trimmed) && definedNamesMap[trimmed]) {
+        trimmed = definedNamesMap[trimmed];
+    }
+
+    return resolveRangeRef(trimmed, sheet.name());
 }
 
 function switchSheet(idx) {
@@ -840,6 +942,37 @@ function updateCell(r, c, value) {
     if (el && el.tagName === 'SELECT' && el.parentElement) {
         const fillColor = (fillMap[r] && fillMap[r][c]) || '';
         el.parentElement.style.background = value === '' ? '#fff3b0' : fillColor;
+    }
+    refreshDependentDropdowns(r);
+}
+
+// Re-resolves every cascading dropdown in the same row whenever its trigger
+// cell changes (e.g. picking a Category refreshes the Size list next to it).
+// Processes dependentValidations in the order they were built (left to
+// right across the row), so a multi-level cascade (Group -> Category ->
+// Size) resolves correctly in one pass: by the time a later column is
+// re-resolved, any earlier column it depends on has already been updated
+// (and cleared, if its old value no longer matches the new option list).
+function refreshDependentDropdowns(changedR) {
+    if (!dependentValidations.length || !currentWorkbook) return;
+    const sheet = currentWorkbook.sheet(currentSheetIndex);
+    let anyChanged = false;
+    dependentValidations.forEach(dep => {
+        if (dep.r !== changedR) return;
+        const ctx = { absRow: dep.absRow, anchorRow: dep.anchorRow, startRow: usedStartRow, startCol: usedStartCol };
+        const opts = resolveListOptions(dep.formula1, sheet, ctx);
+        validationMap[dep.r][dep.c] = opts;
+        const curVal = gridData[dep.r][dep.c];
+        if (curVal && (!opts || !opts.includes(curVal))) {
+            gridData[dep.r][dep.c] = '';
+            try { currentWorkbook.sheet(currentSheetIndex).cell(dep.r + 1, dep.c + 1).value(''); } catch (e) {}
+        }
+        anyChanged = true;
+    });
+    if (anyChanged) {
+        const scrollY = window.scrollY;
+        renderGrid();
+        window.scrollTo(0, scrollY);
     }
 }
 
