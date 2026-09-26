@@ -102,7 +102,24 @@ function showLockedScreen() {
     document.getElementById('reportCard').innerHTML =
         '<div class="pr-card"><p style="font-weight:600; color:#b8860b; margin-top:0;">⚠️ Locked</p>' +
         '<p>This sheet is currently being edited by <b>' + escapeHtml(report.locked_by || 'another user') + '</b>. Please wait until they finish, then try again.</p>' +
-        '<button class="pr-btn pr-btn-primary" style="margin-top:8px;" onclick="location.reload()">Check Again</button></div>';
+        '<p style="font-size:12px; color:#888;">This clears on its own within 15 minutes if that session was simply closed without saving (e.g. same login on a different device/browser tab).</p>' +
+        '<div style="display:flex; gap:8px; margin-top:8px;">' +
+        '<button class="pr-btn pr-btn-primary" onclick="location.reload()">Check Again</button>' +
+        '<button class="pr-btn pr-btn-outline" onclick="forceUnlockReport()">Force Unlock</button>' +
+        '</div></div>';
+}
+
+// Escape hatch for exactly the "same login, different laptop, closed
+// without hitting Back" situation - the lock is tied to a per-browser
+// token, not the account, so even the account's own other session reads as
+// "another user" until the 15-minute self-expiry. Only use when genuinely
+// sure no one is still actively editing - this clears the lock
+// unconditionally, so using it while someone really is mid-edit risks their
+// unsaved changes being lost when whoever saves next overwrites the file.
+async function forceUnlockReport() {
+    if (!confirm('Only do this if you are sure no one is actually editing this sheet right now. Continue?')) return;
+    await supabaseClient.from('pr_inspection_reports').update({ locked_by: null, locked_token: null, locked_at: null }).eq('id', report.id);
+    location.reload();
 }
 
 async function init() {
